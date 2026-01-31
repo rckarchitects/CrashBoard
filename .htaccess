@@ -1,0 +1,162 @@
+# CrashBoard Apache Configuration
+# Security headers and URL rewriting
+
+# Enable Rewrite Engine
+RewriteEngine On
+
+# Force HTTPS (uncomment if using SSL)
+# RewriteCond %{HTTPS} off
+# RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Rewrite URLs to public directory
+RewriteCond %{REQUEST_URI} !^/public/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ /public/$1 [L]
+
+# Allow direct access to assets
+RewriteCond %{REQUEST_URI} ^/assets/
+RewriteRule ^(.*)$ $1 [L]
+
+# Allow direct access to API
+RewriteCond %{REQUEST_URI} ^/api/
+RewriteRule ^(.*)$ $1 [L]
+
+# Default index file
+DirectoryIndex public/index.php index.php
+
+# ============================================
+# Security Headers
+# ============================================
+
+<IfModule mod_headers.c>
+    # Prevent clickjacking
+    Header always set X-Frame-Options "DENY"
+
+    # Prevent MIME type sniffing
+    Header always set X-Content-Type-Options "nosniff"
+
+    # Enable XSS filter
+    Header always set X-XSS-Protection "1; mode=block"
+
+    # Referrer Policy
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Content Security Policy
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self'; frame-ancestors 'none'; form-action 'self';"
+
+    # Permissions Policy
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+
+    # Remove server signature
+    Header unset Server
+    Header always unset X-Powered-By
+</IfModule>
+
+# ============================================
+# Protect Sensitive Files
+# ============================================
+
+# Block access to sensitive files
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+<FilesMatch "\.(htaccess|htpasswd|ini|log|sh|sql|bak|config)$">
+    Require all denied
+</FilesMatch>
+
+# Protect config directory
+<IfModule mod_rewrite.c>
+    RewriteRule ^config/ - [F,L]
+    RewriteRule ^includes/ - [F,L]
+    RewriteRule ^sql/ - [F,L]
+</IfModule>
+
+# ============================================
+# Caching
+# ============================================
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+
+    # Images
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/png "access plus 1 month"
+    ExpiresByType image/gif "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+    ExpiresByType image/webp "access plus 1 month"
+    ExpiresByType image/x-icon "access plus 1 year"
+
+    # CSS and JavaScript
+    ExpiresByType text/css "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+
+    # Fonts
+    ExpiresByType font/woff2 "access plus 1 month"
+    ExpiresByType font/woff "access plus 1 month"
+    ExpiresByType font/ttf "access plus 1 month"
+</IfModule>
+
+# ============================================
+# Compression
+# ============================================
+
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html
+    AddOutputFilterByType DEFLATE text/css
+    AddOutputFilterByType DEFLATE text/javascript
+    AddOutputFilterByType DEFLATE application/javascript
+    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+
+# ============================================
+# PHP Settings (if using PHP handler)
+# ============================================
+
+<IfModule mod_php.c>
+    # Hide PHP version
+    php_flag expose_php off
+
+    # Session security
+    php_value session.cookie_httponly 1
+    php_value session.use_only_cookies 1
+    php_value session.cookie_samesite Strict
+
+    # Error handling (disable display in production)
+    php_flag display_errors off
+    php_flag log_errors on
+</IfModule>
+
+# ============================================
+# Rate Limiting (if using mod_ratelimit)
+# ============================================
+
+<IfModule mod_ratelimit.c>
+    # Limit bandwidth for large files
+    <Location /assets/>
+        SetOutputFilter RATE_LIMIT
+        SetEnv rate-limit 500
+    </Location>
+</IfModule>
+
+# ============================================
+# Block Bad Bots and Scanners
+# ============================================
+
+<IfModule mod_rewrite.c>
+    # Block common vulnerability scanners
+    RewriteCond %{HTTP_USER_AGENT} (nmap|nikto|wikto|sf|sqlmap|bsqlbf|w3af|acunetix|havij|appscan) [NC,OR]
+    RewriteCond %{HTTP_USER_AGENT} (HTTrack|clshttp|archiver|loader|email|harvest|extract|grab|miner) [NC]
+    RewriteRule .* - [F,L]
+
+    # Block access to common attack paths
+    RewriteRule ^(wp-admin|wp-login|wordpress|phpmyadmin|admin\.php|setup\.php) - [F,L]
+</IfModule>
+
+# Disable directory listing
+Options -Indexes
+
+# Disable server signature
+ServerSignature Off

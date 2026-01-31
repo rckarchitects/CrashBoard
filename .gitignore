@@ -1,0 +1,44 @@
+# Configuration (contains API keys and secrets)
+config/config.php
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+cache/
+
+# Composer (if used later)
+/vendor/
+composer.lock
+
+# Node modules (if used for Tailwind build)
+node_modules/
+package-lock.json
+
+# Build artifacts
+/dist/
+/build/
