@@ -152,7 +152,7 @@ DirectoryIndex public/index.php index.php
     RewriteRule .* - [F,L]
 
     # Block access to common attack paths
-    RewriteRule ^(wp-admin|wp-login|wordpress|phpmyadmin|admin\.php|setup\.php) - [F,L]
+    RewriteRule ^(wp-admin|wp-login|wordpress|phpmyadmin|admin\.php) - [F,L]
 </IfModule>
 
 # Disable directory listing

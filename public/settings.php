@@ -59,32 +59,38 @@ if (isPost()) {
 
             if (empty($crmUserId) || empty($crmApiKey)) {
                 Session::setFlash('error', 'Please provide both User ID and API Key.');
+            } elseif (!config('encryption_key') || config('encryption_key') === 'generate-a-64-character-hex-string-here') {
+                Session::setFlash('error', 'Encryption key not configured. Please set a valid encryption_key in config/config.php (use: php -r "echo bin2hex(random_bytes(32));")');
             } else {
-                // Encrypt and store credentials
-                $credentials = encrypt(json_encode([
-                    'user_id' => $crmUserId,
-                    'api_key' => $crmApiKey
-                ]));
+                try {
+                    // Encrypt and store credentials
+                    $credentials = encrypt(json_encode([
+                        'user_id' => $crmUserId,
+                        'api_key' => $crmApiKey
+                    ]));
 
-                $existing = Database::queryOne(
-                    'SELECT id FROM oauth_tokens WHERE user_id = ? AND provider = ?',
-                    [$userId, 'onepagecrm']
-                );
+                    $existing = Database::queryOne(
+                        'SELECT id FROM oauth_tokens WHERE user_id = ? AND provider = ?',
+                        [$userId, 'onepagecrm']
+                    );
 
-                if ($existing) {
-                    Database::execute(
-                        'UPDATE oauth_tokens SET access_token = ?, updated_at = NOW() WHERE user_id = ? AND provider = ?',
-                        [$credentials, $userId, 'onepagecrm']
-                    );
-                } else {
-                    Database::execute(
-                        'INSERT INTO oauth_tokens (user_id, provider, access_token) VALUES (?, ?, ?)',
-                        [$userId, 'onepagecrm', $credentials]
-                    );
+                    if ($existing) {
+                        Database::execute(
+                            'UPDATE oauth_tokens SET access_token = ?, updated_at = NOW() WHERE user_id = ? AND provider = ?',
+                            [$credentials, $userId, 'onepagecrm']
+                        );
+                    } else {
+                        Database::execute(
+                            'INSERT INTO oauth_tokens (user_id, provider, access_token) VALUES (?, ?, ?)',
+                            [$userId, 'onepagecrm', $credentials]
+                        );
+                    }
+
+                    cacheClear("crm_{$userId}");
+                    Session::setFlash('success', 'OnePageCRM credentials saved.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to save credentials: ' . $e->getMessage());
                 }
-
-                cacheClear("crm_{$userId}");
-                Session::setFlash('success', 'OnePageCRM credentials saved.');
             }
             break;
 

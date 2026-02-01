@@ -261,13 +261,25 @@ function getCrmData(int $userId): array
         // Decrypt stored credentials
         $credentials = json_decode(decrypt($token), true);
 
+        if (!$credentials || empty($credentials['user_id']) || empty($credentials['api_key'])) {
+            return ['connected' => false, 'error' => 'Invalid stored credentials'];
+        }
+
         $response = callOnePageCRM($baseUrl, '/actions.json', $credentials, [
             'status' => 'asap,date,date_time,waiting',
             'per_page' => 10
         ]);
 
+        // OnePageCRM returns data in 'data' -> 'actions' array
+        // Each action has 'action' object and optionally 'contact' object
+        $actionsData = $response['data']['actions'] ?? [];
+
         $actions = [];
-        foreach ($response['data']['actions'] ?? [] as $action) {
+        foreach ($actionsData as $item) {
+            // Handle both nested and flat response structures
+            $action = $item['action'] ?? $item;
+            $contact = $item['contact'] ?? null;
+
             $dueDate = $action['date'] ?? null;
             $isOverdue = false;
 
@@ -276,10 +288,18 @@ function getCrmData(int $userId): array
                 $dueDate = formatDate($dueDate, 'M j');
             }
 
+            // Get contact name from contact object or action
+            $contactName = 'Unknown Contact';
+            if ($contact && isset($contact['first_name'])) {
+                $contactName = trim(($contact['first_name'] ?? '') . ' ' . ($contact['last_name'] ?? ''));
+            } elseif (isset($action['contact_name'])) {
+                $contactName = $action['contact_name'];
+            }
+
             $actions[] = [
-                'id' => $action['id'],
-                'contactName' => $action['contact_name'] ?? 'Unknown Contact',
-                'actionText' => $action['text'] ?? 'Action',
+                'id' => $action['id'] ?? '',
+                'contactName' => $contactName,
+                'actionText' => $action['text'] ?? $action['name'] ?? 'Action',
                 'dueDate' => $dueDate ?? 'No date',
                 'isOverdue' => $isOverdue,
             ];
@@ -295,7 +315,7 @@ function getCrmData(int $userId): array
         return $result;
     } catch (Exception $e) {
         logMessage('CRM fetch error: ' . $e->getMessage(), 'error');
-        return ['connected' => true, 'error' => 'Failed to fetch CRM data'];
+        return ['connected' => true, 'error' => 'Failed to fetch CRM data: ' . $e->getMessage()];
     }
 }
 
@@ -397,30 +417,66 @@ function callMicrosoftGraph(string $token, string $endpoint, array $params = [])
 
 /**
  * Call OnePageCRM API
+ *
+ * OnePageCRM uses HMAC-SHA256 signature authentication.
+ * See: https://developer.onepagecrm.com/api/#/Authentication
  */
 function callOnePageCRM(string $baseUrl, string $endpoint, array $credentials, array $params = []): array
 {
+    $userId = $credentials['user_id'];
+    $apiKey = $credentials['api_key'];
+    $timestamp = time();
+
     $url = $baseUrl . $endpoint;
+    $queryString = '';
 
     if (!empty($params)) {
-        $url .= '?' . http_build_query($params);
+        $queryString = http_build_query($params);
+        $url .= '?' . $queryString;
     }
+
+    // Build the signature string: UID.TIMESTAMP.METHOD.SHA1(URL)
+    $method = 'GET';
+    $urlHash = sha1($url);
+    $signatureString = "{$userId}.{$timestamp}.{$method}.{$urlHash}";
+
+    // Create HMAC-SHA256 signature
+    $signature = hash_hmac('sha256', $signatureString, $apiKey);
 
     $context = stream_context_create([
         'http' => [
-            'method' => 'GET',
-            'header' => "X-OnePageCRM-UID: {$credentials['user_id']}\r\nX-OnePageCRM-TS: " . time() . "\r\nX-OnePageCRM-Auth: {$credentials['api_key']}\r\nContent-Type: application/json",
-            'ignore_errors' => true
+            'method' => $method,
+            'header' => implode("\r\n", [
+                "X-OnePageCRM-UID: {$userId}",
+                "X-OnePageCRM-TS: {$timestamp}",
+                "X-OnePageCRM-Auth: {$signature}",
+                "Content-Type: application/json",
+                "Accept: application/json"
+            ]),
+            'ignore_errors' => true,
+            'timeout' => 30
         ]
     ]);
 
     $response = file_get_contents($url, false, $context);
 
-    if (!$response) {
-        throw new Exception('Failed to call OnePageCRM API');
+    if ($response === false) {
+        throw new Exception('Failed to connect to OnePageCRM API');
     }
 
-    return json_decode($response, true);
+    $data = json_decode($response, true);
+
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        throw new Exception('Invalid JSON response from OnePageCRM');
+    }
+
+    // Check for API errors
+    if (isset($data['status']) && $data['status'] !== 0) {
+        $errorMsg = $data['message'] ?? 'Unknown OnePageCRM API error';
+        throw new Exception("OnePageCRM API error: {$errorMsg}");
+    }
+
+    return $data;
 }
 
 /**
