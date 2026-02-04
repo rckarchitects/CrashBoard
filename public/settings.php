@@ -102,6 +102,103 @@ if (isPost()) {
             cacheClear("crm_{$userId}");
             Session::setFlash('success', 'OnePageCRM disconnected.');
             break;
+
+        case 'clear_cache':
+            $cacheType = post('cache_type', 'all');
+            if ($cacheType === 'all') {
+                cacheClear("email_{$userId}");
+                cacheClear("calendar_{$userId}");
+                cacheClear("todo_{$userId}");
+                cacheClear("crm_{$userId}");
+                cacheClear("weather_{$userId}");
+                Session::setFlash('success', 'All tile caches cleared.');
+            } else {
+                cacheClear("{$cacheType}_{$userId}");
+                Session::setFlash('success', ucfirst($cacheType) . ' cache cleared.');
+            }
+            break;
+
+        case 'save_weather':
+            $latitude = trim(post('weather_latitude', ''));
+            $longitude = trim(post('weather_longitude', ''));
+            $locationName = trim(post('weather_location', ''));
+            $units = post('weather_units', 'celsius');
+
+            if (empty($latitude) || empty($longitude) || empty($locationName)) {
+                Session::setFlash('error', 'Please provide location name, latitude, and longitude.');
+            } elseif (!is_numeric($latitude) || !is_numeric($longitude)) {
+                Session::setFlash('error', 'Latitude and longitude must be numeric values.');
+            } elseif ($latitude < -90 || $latitude > 90 || $longitude < -180 || $longitude > 180) {
+                Session::setFlash('error', 'Invalid coordinates. Latitude must be -90 to 90, longitude -180 to 180.');
+            } else {
+                try {
+                    // Store weather settings in database
+                    $weatherSettingsJson = json_encode([
+                        'latitude' => (float)$latitude,
+                        'longitude' => (float)$longitude,
+                        'location_name' => $locationName,
+                        'units' => $units
+                    ]);
+
+                    $existing = Database::queryOne(
+                        'SELECT id FROM oauth_tokens WHERE user_id = ? AND provider = ?',
+                        [$userId, 'weather']
+                    );
+
+                    if ($existing) {
+                        Database::execute(
+                            'UPDATE oauth_tokens SET access_token = ?, updated_at = NOW() WHERE user_id = ? AND provider = ?',
+                            [$weatherSettingsJson, $userId, 'weather']
+                        );
+                    } else {
+                        Database::execute(
+                            'INSERT INTO oauth_tokens (user_id, provider, access_token) VALUES (?, ?, ?)',
+                            [$userId, 'weather', $weatherSettingsJson]
+                        );
+                    }
+
+                    cacheClear("weather_{$userId}");
+
+                    // Ensure weather tile exists in tiles table
+                    $existingTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ?',
+                        [$userId, 'weather']
+                    );
+
+                    if (!$existingTile) {
+                        // Get the max position to add weather tile at the end
+                        $maxPos = Database::queryOne(
+                            'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ?',
+                            [$userId]
+                        );
+                        $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+
+                        Database::execute(
+                            'INSERT INTO tiles (user_id, tile_type, title, position, column_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?)',
+                            [$userId, 'weather', 'Weather', $newPosition, 1, true]
+                        );
+                    }
+
+                    Session::setFlash('success', 'Weather location saved.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Database error: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'remove_weather':
+            Database::execute(
+                'DELETE FROM oauth_tokens WHERE user_id = ? AND provider = ?',
+                [$userId, 'weather']
+            );
+            // Also remove the weather tile from dashboard
+            Database::execute(
+                'DELETE FROM tiles WHERE user_id = ? AND tile_type = ?',
+                [$userId, 'weather']
+            );
+            cacheClear("weather_{$userId}");
+            Session::setFlash('success', 'Weather settings removed.');
+            break;
     }
 
     redirect('/settings.php');
@@ -110,6 +207,70 @@ if (isPost()) {
 // Get flash messages
 $success = Session::flash('success');
 $error = Session::flash('error');
+
+// Get cache status for each tile type
+function getCacheStatus(int $userId, string $type): ?array
+{
+    $cacheKey = "{$type}_{$userId}";
+    $result = Database::queryOne(
+        'SELECT expires_at, created_at FROM api_cache WHERE cache_key = ? AND expires_at > NOW()',
+        [$cacheKey]
+    );
+
+    if (!$result) {
+        return null;
+    }
+
+    $expiresAt = strtotime($result['expires_at']);
+    $remainingSeconds = $expiresAt - time();
+
+    return [
+        'expires_at' => $result['expires_at'],
+        'created_at' => $result['created_at'],
+        'remaining_seconds' => $remainingSeconds,
+        'remaining_formatted' => formatRemainingTime($remainingSeconds)
+    ];
+}
+
+function formatRemainingTime(int $seconds): string
+{
+    if ($seconds <= 0) {
+        return 'Expired';
+    }
+    if ($seconds < 60) {
+        return $seconds . 's';
+    }
+    if ($seconds < 3600) {
+        $mins = floor($seconds / 60);
+        $secs = $seconds % 60;
+        return $mins . 'm ' . $secs . 's';
+    }
+    $hours = floor($seconds / 3600);
+    $mins = floor(($seconds % 3600) / 60);
+    return $hours . 'h ' . $mins . 'm';
+}
+
+$cacheStatus = [
+    'email' => getCacheStatus($userId, 'email'),
+    'calendar' => getCacheStatus($userId, 'calendar'),
+    'todo' => getCacheStatus($userId, 'todo'),
+    'crm' => getCacheStatus($userId, 'crm'),
+    'weather' => getCacheStatus($userId, 'weather'),
+];
+
+// Get weather settings
+$weatherSettings = null;
+try {
+    $weatherRow = Database::queryOne(
+        'SELECT access_token FROM oauth_tokens WHERE user_id = ? AND provider = ?',
+        [$userId, 'weather']
+    );
+    if ($weatherRow) {
+        $weatherSettings = json_decode($weatherRow['access_token'], true);
+    }
+} catch (Exception $e) {
+    // Weather provider not yet added to database ENUM - this is expected until migration is run
+}
 
 $pageTitle = 'Settings - CrashBoard';
 ?>
@@ -300,6 +461,173 @@ $pageTitle = 'Settings - CrashBoard';
                     </form>
                     <?php endif; ?>
                 </div>
+            </div>
+        </section>
+
+        <!-- Weather Settings -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Weather Settings</h2>
+                <p class="mt-1 text-sm text-gray-500">Configure your location for weather forecasts. Uses Open-Meteo (free, no API key required).</p>
+            </div>
+
+            <div class="p-6">
+                <div class="flex items-start justify-between mb-4">
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 bg-sky-100 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/>
+                            </svg>
+                        </div>
+                        <div class="ml-4">
+                            <h3 class="text-sm font-medium text-gray-900">Weather Forecast</h3>
+                            <p class="text-sm text-gray-500">Current conditions and 5-day forecast</p>
+                        </div>
+                    </div>
+                    <?php if ($weatherSettings): ?>
+                    <div class="flex items-center space-x-3">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <?= e($weatherSettings['location_name'] ?? 'Configured') ?>
+                        </span>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="remove_weather">
+                            <button type="submit" class="text-sm text-red-600 hover:text-red-700">
+                                Remove
+                            </button>
+                        </form>
+                    </div>
+                    <?php endif; ?>
+                </div>
+
+                <form action="" method="POST" class="space-y-4">
+                    <?= Session::csrfField() ?>
+                    <input type="hidden" name="action" value="save_weather">
+
+                    <div>
+                        <label for="weather_location" class="block text-sm font-medium text-gray-700">Location Name</label>
+                        <input
+                            type="text"
+                            id="weather_location"
+                            name="weather_location"
+                            value="<?= e($weatherSettings['location_name'] ?? '') ?>"
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                            placeholder="e.g., London, New York, Tokyo"
+                        >
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <label for="weather_latitude" class="block text-sm font-medium text-gray-700">Latitude</label>
+                            <input
+                                type="text"
+                                id="weather_latitude"
+                                name="weather_latitude"
+                                value="<?= e((string)($weatherSettings['latitude'] ?? '')) ?>"
+                                class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                                placeholder="e.g., 51.5074"
+                            >
+                        </div>
+                        <div>
+                            <label for="weather_longitude" class="block text-sm font-medium text-gray-700">Longitude</label>
+                            <input
+                                type="text"
+                                id="weather_longitude"
+                                name="weather_longitude"
+                                value="<?= e((string)($weatherSettings['longitude'] ?? '')) ?>"
+                                class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                                placeholder="e.g., -0.1278"
+                            >
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="weather_units" class="block text-sm font-medium text-gray-700">Temperature Units</label>
+                        <select
+                            id="weather_units"
+                            name="weather_units"
+                            class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                        >
+                            <option value="celsius" <?= ($weatherSettings['units'] ?? 'celsius') === 'celsius' ? 'selected' : '' ?>>Celsius (°C)</option>
+                            <option value="fahrenheit" <?= ($weatherSettings['units'] ?? '') === 'fahrenheit' ? 'selected' : '' ?>>Fahrenheit (°F)</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <a href="https://www.latlong.net/" target="_blank" class="text-sm text-primary-600 hover:text-primary-700">
+                            Find your coordinates →
+                        </a>
+                        <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500">
+                            Save Location
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- Cache Management -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Cache Management</h2>
+                <p class="mt-1 text-sm text-gray-500">View and clear cached tile data. Tiles cache API responses to improve performance.</p>
+            </div>
+
+            <div class="p-6">
+                <div class="space-y-4 mb-6">
+                    <?php
+                    $tileTypes = [
+                        'email' => ['name' => 'Email', 'icon' => 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', 'color' => 'blue'],
+                        'calendar' => ['name' => 'Calendar', 'icon' => 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', 'color' => 'green'],
+                        'todo' => ['name' => 'Tasks', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', 'color' => 'purple'],
+                        'crm' => ['name' => 'CRM Actions', 'icon' => 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', 'color' => 'orange'],
+                        'weather' => ['name' => 'Weather', 'icon' => 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z', 'color' => 'sky'],
+                    ];
+                    ?>
+
+                    <?php foreach ($tileTypes as $type => $info): ?>
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div class="flex items-center">
+                            <div class="w-8 h-8 bg-<?= $info['color'] ?>-100 rounded-lg flex items-center justify-center mr-3">
+                                <svg class="w-4 h-4 text-<?= $info['color'] ?>-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="<?= $info['icon'] ?>"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <span class="text-sm font-medium text-gray-900"><?= $info['name'] ?></span>
+                                <?php if ($cacheStatus[$type]): ?>
+                                <p class="text-xs text-gray-500">
+                                    Expires in: <span class="font-medium text-<?= $info['color'] ?>-600"><?= $cacheStatus[$type]['remaining_formatted'] ?></span>
+                                </p>
+                                <?php else: ?>
+                                <p class="text-xs text-gray-400">No cache</p>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <?php if ($cacheStatus[$type]): ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="clear_cache">
+                            <input type="hidden" name="cache_type" value="<?= $type ?>">
+                            <button type="submit" class="text-xs text-red-600 hover:text-red-700 font-medium">
+                                Clear
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <form action="" method="POST">
+                    <?= Session::csrfField() ?>
+                    <input type="hidden" name="action" value="clear_cache">
+                    <input type="hidden" name="cache_type" value="all">
+                    <button type="submit" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500">
+                        <svg class="w-4 h-4 mr-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                        Clear All Caches
+                    </button>
+                </form>
             </div>
         </section>
 

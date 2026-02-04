@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:developer.onepagecrm.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(php -l:*)",
+      "Bash(xxd:*)",
+      "Bash(dir:*)",
+      "Bash(where:*)"
+    ]
+  }
+}

@@ -65,6 +65,16 @@ return [
         'max_tokens' => 1024,
     ],
 
+    // Weather configuration
+    // Uses Open-Meteo API (free, no API key required)
+    // Find your coordinates at: https://www.latlong.net/
+    'weather' => [
+        'latitude' => 51.5074,               // Your location latitude (e.g., London)
+        'longitude' => -0.1278,              // Your location longitude
+        'location_name' => 'London',         // Display name for your location
+        'units' => 'celsius',                // 'celsius' or 'fahrenheit'
+    ],
+
     // Tile refresh settings (in seconds)
     'refresh' => [
         'default_interval' => 300,           // 5 minutes
@@ -72,6 +82,7 @@ return [
         'calendar' => 600,                   // 10 minutes
         'todo' => 300,
         'crm' => 600,
+        'weather' => 1800,                   // 30 minutes
     ],
 
     // Cache settings

@@ -89,7 +89,7 @@ function gatherDashboardContext(int $userId): string
     $context = [];
 
     // Get email summary
-    $emailData = getCachedTileData($userId, 'email');
+    $emailData = getTileDataForContext($userId, 'email');
     if ($emailData && $emailData['connected']) {
         $unreadCount = $emailData['unreadCount'] ?? 0;
         $context[] = "EMAILS: {$unreadCount} unread emails.";
@@ -104,7 +104,7 @@ function gatherDashboardContext(int $userId): string
     }
 
     // Get calendar summary
-    $calendarData = getCachedTileData($userId, 'calendar');
+    $calendarData = getTileDataForContext($userId, 'calendar');
     if ($calendarData && $calendarData['connected']) {
         $eventCount = count($calendarData['events'] ?? []);
         $context[] = "\nCALENDAR: {$eventCount} events today.";
@@ -119,7 +119,7 @@ function gatherDashboardContext(int $userId): string
     }
 
     // Get tasks summary
-    $todoData = getCachedTileData($userId, 'todo');
+    $todoData = getTileDataForContext($userId, 'todo');
     if ($todoData && $todoData['connected']) {
         $taskCount = count($todoData['tasks'] ?? []);
         $context[] = "\nTASKS: {$taskCount} pending tasks.";
@@ -135,7 +135,7 @@ function gatherDashboardContext(int $userId): string
     }
 
     // Get CRM summary
-    $crmData = getCachedTileData($userId, 'crm');
+    $crmData = getTileDataForContext($userId, 'crm');
     if ($crmData && $crmData['connected']) {
         $actionCount = count($crmData['actions'] ?? []);
         $context[] = "\nCRM ACTIONS: {$actionCount} pending actions.";
@@ -149,13 +149,38 @@ function gatherDashboardContext(int $userId): string
         $context[] = "\nCRM: Not connected.";
     }
 
+    // Get weather summary
+    $weatherData = getTileDataForContext($userId, 'weather');
+    if ($weatherData && $weatherData['configured'] && !isset($weatherData['error'])) {
+        $current = $weatherData['current'] ?? [];
+        $location = $weatherData['location'] ?? 'Unknown';
+        $temp = $current['temperature'] ?? 'N/A';
+        $units = $weatherData['units'] ?? '°C';
+        $description = $current['description'] ?? 'Unknown';
+        $context[] = "\nWEATHER ({$location}): {$temp}{$units}, {$description}.";
+
+        // Add forecast summary
+        if (!empty($weatherData['forecast'])) {
+            $context[] = "Forecast:";
+            foreach (array_slice($weatherData['forecast'], 0, 3) as $day) {
+                $precip = $day['precipProbability'] > 20 ? " ({$day['precipProbability']}% rain)" : '';
+                $context[] = "- {$day['day']}: {$day['high']}°/{$day['low']}°{$precip}";
+            }
+        }
+    } else {
+        $context[] = "\nWEATHER: Not configured.";
+    }
+
+    // Add current date/time context
+    $context[] = "\nCURRENT TIME: " . date('l, F j, Y g:i A');
+
     return implode("\n", $context);
 }
 
 /**
- * Get cached tile data
+ * Get tile data from cache
  */
-function getCachedTileData(int $userId, string $type): ?array
+function getTileDataForContext(int $userId, string $type): ?array
 {
     $cacheKey = "{$type}_{$userId}";
     return cache($cacheKey);

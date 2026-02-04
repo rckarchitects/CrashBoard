@@ -45,6 +45,9 @@ switch ($tileType) {
     case 'crm':
         jsonResponse(getCrmData($userId));
         break;
+    case 'weather':
+        jsonResponse(getWeatherData($userId));
+        break;
     default:
         jsonError('Unknown tile type', 400);
 }
@@ -265,42 +268,85 @@ function getCrmData(int $userId): array
             return ['connected' => false, 'error' => 'Invalid stored credentials'];
         }
 
+        // Get user's email to filter actions assigned to them
+        $user = Database::queryOne('SELECT email FROM users WHERE id = ?', [$userId]);
+        $userEmail = $user['email'] ?? '';
+
+        // Filter by assignee (the user_id in OnePageCRM credentials is the user's ID in their system)
         $response = callOnePageCRM($baseUrl, '/actions.json', $credentials, [
             'status' => 'asap,date,date_time,waiting',
+            'assignee_id' => $credentials['user_id'],
             'per_page' => 10
         ]);
 
         // OnePageCRM returns data in 'data' -> 'actions' array
-        // Each action has 'action' object and optionally 'contact' object
         $actionsData = $response['data']['actions'] ?? [];
+
+        // Collect all unique contact IDs to fetch in one batch
+        $contactIds = [];
+        foreach ($actionsData as $item) {
+            $action = $item['action'] ?? $item;
+            if (!empty($action['contact_id'])) {
+                $contactIds[$action['contact_id']] = true;
+            }
+        }
+
+        // Fetch contact details for all contact IDs
+        $contacts = [];
+        foreach (array_keys($contactIds) as $contactId) {
+            try {
+                $contactResponse = callOnePageCRM($baseUrl, "/contacts/{$contactId}.json", $credentials, []);
+                $contactData = $contactResponse['data']['contact'] ?? null;
+                if ($contactData) {
+                    $firstName = $contactData['first_name'] ?? '';
+                    $lastName = $contactData['last_name'] ?? '';
+                    $name = trim($firstName . ' ' . $lastName);
+                    if (empty(trim($name)) && !empty($contactData['company_name'])) {
+                        $name = $contactData['company_name'];
+                    }
+                    $contacts[$contactId] = !empty(trim($name)) ? $name : 'Unknown Contact';
+                } else {
+                    $contacts[$contactId] = 'Unknown Contact';
+                }
+            } catch (Exception $e) {
+                // Log the error for debugging
+                logMessage("Failed to fetch contact {$contactId}: " . $e->getMessage(), 'error');
+                $contacts[$contactId] = 'Unknown Contact';
+            }
+        }
 
         $actions = [];
         foreach ($actionsData as $item) {
-            // Handle both nested and flat response structures
             $action = $item['action'] ?? $item;
-            $contact = $item['contact'] ?? null;
 
             $dueDate = $action['date'] ?? null;
             $isOverdue = false;
+            $dueDateFormatted = 'No date';
 
             if ($dueDate) {
-                $isOverdue = strtotime($dueDate) < strtotime('today');
-                $dueDate = formatDate($dueDate, 'M j');
+                $dueTimestamp = strtotime($dueDate);
+                $isOverdue = $dueTimestamp < strtotime('today');
+
+                // Include year if not current year, or if overdue
+                $currentYear = date('Y');
+                $dueYear = date('Y', $dueTimestamp);
+
+                if ($isOverdue || $dueYear !== $currentYear) {
+                    $dueDateFormatted = formatDate($dueDate, 'M j, Y');
+                } else {
+                    $dueDateFormatted = formatDate($dueDate, 'M j');
+                }
             }
 
-            // Get contact name from contact object or action
-            $contactName = 'Unknown Contact';
-            if ($contact && isset($contact['first_name'])) {
-                $contactName = trim(($contact['first_name'] ?? '') . ' ' . ($contact['last_name'] ?? ''));
-            } elseif (isset($action['contact_name'])) {
-                $contactName = $action['contact_name'];
-            }
+            // Get contact name from our fetched contacts
+            $contactId = $action['contact_id'] ?? '';
+            $contactName = $contacts[$contactId] ?? 'Unknown Contact';
 
             $actions[] = [
                 'id' => $action['id'] ?? '',
                 'contactName' => $contactName,
-                'actionText' => $action['text'] ?? $action['name'] ?? 'Action',
-                'dueDate' => $dueDate ?? 'No date',
+                'actionText' => $action['text'] ?? 'Action',
+                'dueDate' => $dueDateFormatted,
                 'isOverdue' => $isOverdue,
             ];
         }
@@ -418,38 +464,28 @@ function callMicrosoftGraph(string $token, string $endpoint, array $params = [])
 /**
  * Call OnePageCRM API
  *
- * OnePageCRM uses HMAC-SHA256 signature authentication.
- * See: https://developer.onepagecrm.com/api/#/Authentication
+ * OnePageCRM uses HTTP Basic Authentication.
+ * See: https://developer.onepagecrm.com/api/
  */
 function callOnePageCRM(string $baseUrl, string $endpoint, array $credentials, array $params = []): array
 {
     $userId = $credentials['user_id'];
     $apiKey = $credentials['api_key'];
-    $timestamp = time();
 
     $url = $baseUrl . $endpoint;
-    $queryString = '';
 
     if (!empty($params)) {
-        $queryString = http_build_query($params);
-        $url .= '?' . $queryString;
+        $url .= '?' . http_build_query($params);
     }
 
-    // Build the signature string: UID.TIMESTAMP.METHOD.SHA1(URL)
-    $method = 'GET';
-    $urlHash = sha1($url);
-    $signatureString = "{$userId}.{$timestamp}.{$method}.{$urlHash}";
-
-    // Create HMAC-SHA256 signature
-    $signature = hash_hmac('sha256', $signatureString, $apiKey);
+    // Basic Auth: base64 encode "user_id:api_key"
+    $authString = base64_encode("{$userId}:{$apiKey}");
 
     $context = stream_context_create([
         'http' => [
-            'method' => $method,
+            'method' => 'GET',
             'header' => implode("\r\n", [
-                "X-OnePageCRM-UID: {$userId}",
-                "X-OnePageCRM-TS: {$timestamp}",
-                "X-OnePageCRM-Auth: {$signature}",
+                "Authorization: Basic {$authString}",
                 "Content-Type: application/json",
                 "Accept: application/json"
             ]),
@@ -477,6 +513,190 @@ function callOnePageCRM(string $baseUrl, string $endpoint, array $credentials, a
     }
 
     return $data;
+}
+
+/**
+ * Get weather data from Open-Meteo API
+ * Free API, no key required: https://open-meteo.com/
+ */
+function getWeatherData(int $userId): array
+{
+    // First check user-specific settings in database
+    $weatherRow = Database::queryOne(
+        'SELECT access_token FROM oauth_tokens WHERE user_id = ? AND provider = ?',
+        [$userId, 'weather']
+    );
+
+    $weatherConfig = null;
+    if ($weatherRow) {
+        $weatherConfig = json_decode($weatherRow['access_token'], true);
+    }
+
+    // Fall back to config file if no user settings
+    if (!$weatherConfig || empty($weatherConfig['latitude']) || empty($weatherConfig['longitude'])) {
+        $weatherConfig = config('weather');
+    }
+
+    if (!$weatherConfig || empty($weatherConfig['latitude']) || empty($weatherConfig['longitude'])) {
+        return ['configured' => false];
+    }
+
+    $cacheKey = "weather_{$userId}";
+    $cached = cache($cacheKey);
+
+    if ($cached !== null) {
+        return $cached;
+    }
+
+    try {
+        $latitude = $weatherConfig['latitude'];
+        $longitude = $weatherConfig['longitude'];
+        $locationName = $weatherConfig['location_name'] ?? 'Your Location';
+        $units = $weatherConfig['units'] ?? 'celsius';
+
+        // Build API URL
+        $tempUnit = $units === 'fahrenheit' ? 'fahrenheit' : 'celsius';
+        $url = 'https://api.open-meteo.com/v1/forecast?' . http_build_query([
+            'latitude' => $latitude,
+            'longitude' => $longitude,
+            'current' => 'temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m',
+            'daily' => 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+            'temperature_unit' => $tempUnit,
+            'wind_speed_unit' => 'mph',
+            'timezone' => config('app.timezone', 'auto'),
+            'forecast_days' => 5
+        ]);
+
+        $context = stream_context_create([
+            'http' => [
+                'method' => 'GET',
+                'header' => 'Accept: application/json',
+                'ignore_errors' => true,
+                'timeout' => 10
+            ]
+        ]);
+
+        $response = file_get_contents($url, false, $context);
+
+        if ($response === false) {
+            throw new Exception('Failed to connect to weather API');
+        }
+
+        $data = json_decode($response, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception('Invalid JSON response from weather API');
+        }
+
+        if (isset($data['error'])) {
+            throw new Exception($data['reason'] ?? 'Weather API error');
+        }
+
+        // Parse current weather
+        $current = $data['current'] ?? [];
+        $daily = $data['daily'] ?? [];
+
+        $result = [
+            'configured' => true,
+            'location' => $locationName,
+            'units' => $units === 'fahrenheit' ? '°F' : '°C',
+            'current' => [
+                'temperature' => round($current['temperature_2m'] ?? 0),
+                'feelsLike' => round($current['apparent_temperature'] ?? 0),
+                'humidity' => $current['relative_humidity_2m'] ?? 0,
+                'windSpeed' => round($current['wind_speed_10m'] ?? 0),
+                'weatherCode' => $current['weather_code'] ?? 0,
+                'description' => getWeatherDescription($current['weather_code'] ?? 0),
+                'icon' => getWeatherIcon($current['weather_code'] ?? 0),
+            ],
+            'forecast' => []
+        ];
+
+        // Parse 5-day forecast
+        if (!empty($daily['time'])) {
+            $timezone = config('app.timezone', 'UTC');
+            for ($i = 0; $i < min(5, count($daily['time'])); $i++) {
+                $date = new DateTime($daily['time'][$i], new DateTimeZone($timezone));
+                $result['forecast'][] = [
+                    'day' => $i === 0 ? 'Today' : $date->format('D'),
+                    'date' => $date->format('M j'),
+                    'high' => round($daily['temperature_2m_max'][$i] ?? 0),
+                    'low' => round($daily['temperature_2m_min'][$i] ?? 0),
+                    'precipProbability' => $daily['precipitation_probability_max'][$i] ?? 0,
+                    'weatherCode' => $daily['weather_code'][$i] ?? 0,
+                    'icon' => getWeatherIcon($daily['weather_code'][$i] ?? 0),
+                ];
+            }
+        }
+
+        // Cache for 30 minutes
+        cache($cacheKey, fn() => $result, config('refresh.weather', 1800));
+
+        return $result;
+    } catch (Exception $e) {
+        logMessage('Weather fetch error: ' . $e->getMessage(), 'error');
+        return ['configured' => true, 'error' => 'Failed to fetch weather data'];
+    }
+}
+
+/**
+ * Get weather description from WMO weather code
+ * See: https://open-meteo.com/en/docs
+ */
+function getWeatherDescription(int $code): string
+{
+    $descriptions = [
+        0 => 'Clear sky',
+        1 => 'Mainly clear',
+        2 => 'Partly cloudy',
+        3 => 'Overcast',
+        45 => 'Foggy',
+        48 => 'Rime fog',
+        51 => 'Light drizzle',
+        53 => 'Drizzle',
+        55 => 'Dense drizzle',
+        56 => 'Freezing drizzle',
+        57 => 'Dense freezing drizzle',
+        61 => 'Light rain',
+        63 => 'Rain',
+        65 => 'Heavy rain',
+        66 => 'Freezing rain',
+        67 => 'Heavy freezing rain',
+        71 => 'Light snow',
+        73 => 'Snow',
+        75 => 'Heavy snow',
+        77 => 'Snow grains',
+        80 => 'Light showers',
+        81 => 'Showers',
+        82 => 'Heavy showers',
+        85 => 'Light snow showers',
+        86 => 'Snow showers',
+        95 => 'Thunderstorm',
+        96 => 'Thunderstorm with hail',
+        99 => 'Thunderstorm with heavy hail',
+    ];
+
+    return $descriptions[$code] ?? 'Unknown';
+}
+
+/**
+ * Get weather icon class from WMO weather code
+ */
+function getWeatherIcon(int $code): string
+{
+    // Map codes to icon names
+    if ($code === 0) return 'sun';
+    if ($code <= 2) return 'cloud-sun';
+    if ($code === 3) return 'cloud';
+    if ($code >= 45 && $code <= 48) return 'fog';
+    if ($code >= 51 && $code <= 57) return 'cloud-drizzle';
+    if ($code >= 61 && $code <= 67) return 'cloud-rain';
+    if ($code >= 71 && $code <= 77) return 'snowflake';
+    if ($code >= 80 && $code <= 82) return 'cloud-showers';
+    if ($code >= 85 && $code <= 86) return 'cloud-snow';
+    if ($code >= 95) return 'bolt';
+
+    return 'cloud';
 }
 
 /**

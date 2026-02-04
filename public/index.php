@@ -139,8 +139,40 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                     Refresh All
                 </button>
             </div>
-            <div class="text-sm text-gray-500">
-                Auto-refresh: <span id="autoRefreshStatus" class="font-medium text-green-600">enabled</span>
+            <div class="flex items-center space-x-4">
+                <div class="text-sm text-gray-500">
+                    Auto-refresh: <span id="autoRefreshStatus" class="font-medium text-green-600">enabled</span>
+                </div>
+                <!-- Reorder Button -->
+                <button
+                    id="reorderTiles"
+                    class="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors"
+                    title="Reorder tiles"
+                >
+                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/>
+                    </svg>
+                    Reorder
+                </button>
+                <!-- Reorder Mode Controls (hidden by default) -->
+                <div id="reorderControls" class="hidden flex items-center space-x-2">
+                    <span class="text-sm text-amber-600 font-medium">Drag tiles to reorder</span>
+                    <button
+                        id="saveOrder"
+                        class="inline-flex items-center px-3 py-1.5 border border-transparent rounded-lg text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+                    >
+                        <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        Save
+                    </button>
+                    <button
+                        id="cancelReorder"
+                        class="inline-flex items-center px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
+                    >
+                        Cancel
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -236,6 +268,28 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                 </div>
             </div>
 
+            <div class="tile" data-tile-type="weather" data-tile-id="0">
+                <div class="tile-header">
+                    <h3 class="tile-title">
+                        <svg class="w-5 h-5 mr-2 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/>
+                        </svg>
+                        Weather
+                    </h3>
+                    <button class="tile-refresh" title="Refresh">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="tile-content">
+                    <div class="tile-placeholder">
+                        <p>Configure your location to see weather</p>
+                        <a href="/settings.php" class="tile-connect-btn">Configure Weather</a>
+                    </div>
+                </div>
+            </div>
+
             <div class="tile tile-wide" data-tile-type="claude" data-tile-id="0">
                 <div class="tile-header">
                     <h3 class="tile-title">
@@ -244,19 +298,30 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                         </svg>
                         AI Assistant
                     </h3>
+                    <button class="tile-refresh" title="Refresh Suggestions" onclick="window.refreshSuggestions()">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </button>
                 </div>
                 <div class="tile-content">
                     <div class="claude-interface">
                         <div id="claudeMessages" class="claude-messages">
-                            <div class="claude-welcome">
-                                <p>Ask me anything about your dashboard data, or request summaries of your emails, tasks, and calendar.</p>
+                            <!-- AI Suggestions Section -->
+                            <div class="ai-suggestions">
+                                <div class="suggestions-loading">
+                                    <div class="loading-spinner"></div>
+                                    <p>Analyzing your dashboard...</p>
+                                </div>
                             </div>
+                            <!-- Chat Section (hidden initially, shown when user asks a question) -->
+                            <div class="claude-chat hidden"></div>
                         </div>
                         <form id="claudeForm" class="claude-input-form">
                             <input
                                 type="text"
                                 id="claudeInput"
-                                placeholder="Ask a question or request a summary..."
+                                placeholder="Ask a question about your data..."
                                 class="claude-input"
                                 autocomplete="off"
                             >
@@ -273,12 +338,26 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                 <?php foreach ($tiles as $tile): ?>
                 <div class="tile <?= $tile['column_span'] > 1 ? 'tile-wide' : '' ?>" data-tile-type="<?= e($tile['tile_type']) ?>" data-tile-id="<?= $tile['id'] ?>">
                     <div class="tile-header">
+                        <?php if ($tile['tile_type'] === 'claude'): ?>
+                        <h3 class="tile-title">
+                            <svg class="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                            </svg>
+                            <?= e($tile['title'] ?? 'AI Assistant') ?>
+                        </h3>
+                        <button class="tile-refresh" title="Refresh Suggestions" onclick="window.refreshSuggestions()">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                        </button>
+                        <?php else: ?>
                         <h3 class="tile-title"><?= e($tile['title'] ?? ucfirst($tile['tile_type'])) ?></h3>
                         <button class="tile-refresh" title="Refresh">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                             </svg>
                         </button>
+                        <?php endif; ?>
                     </div>
                     <div class="tile-content">
                         <div class="tile-loading">

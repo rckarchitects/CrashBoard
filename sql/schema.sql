@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS oauth_tokens (
     id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     user_id INT UNSIGNED NOT NULL,
-    provider ENUM('microsoft', 'onepagecrm') NOT NULL,
+    provider ENUM('microsoft', 'onepagecrm', 'weather') NOT NULL,
     access_token TEXT NOT NULL,
     refresh_token TEXT NULL,
     token_type VARCHAR(50) DEFAULT 'Bearer',
