@@ -8,31 +8,50 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/auth.php';
 
-// Require authentication
-if (!Auth::check()) {
+// Initialize session
+Session::init();
+
+// Cron warm-up: allow refresh when valid cron secret and user_id are provided (no session)
+$cronSecret = config('cron.secret', '');
+$cronToken = $_GET['token'] ?? $_SERVER['HTTP_X_CRON_TOKEN'] ?? '';
+$cronUserId = isset($_GET['user_id']) ? (int)$_GET['user_id'] : 0;
+if ($cronSecret !== '' && $cronToken !== '' && hash_equals($cronSecret, $cronToken) && $cronUserId > 0) {
+    define('CRON_WARM_USER_ID', $cronUserId);
+}
+
+// Require authentication (skip for cron warm-up)
+if (!defined('CRON_WARM_USER_ID') && !Auth::check()) {
     jsonError('Unauthorized', 401);
 }
 
-// Require AJAX request
-if (!isAjax()) {
-    jsonError('Invalid request', 400);
-}
+// For cron warm-up, skip normal request handling (handled at end of file)
+if (!defined('CRON_WARM_USER_ID')) {
+    // Require AJAX request
+    if (!isAjax()) {
+        jsonError('Invalid request', 400);
+    }
 
-// Verify CSRF
-if (!Auth::verifyCsrf()) {
-    jsonError('Invalid security token', 403);
-}
+    // Verify CSRF
+    if (!Auth::verifyCsrf()) {
+        jsonError('Invalid security token', 403);
+    }
 
-// Get request data
-$input = json_decode(file_get_contents('php://input'), true);
-$tileType = $input['type'] ?? '';
-$tileId = $input['tile_id'] ?? 0;
-$userId = Auth::id();
+    // Get request data
+    $input = json_decode(file_get_contents('php://input'), true);
+    $tileType = $input['type'] ?? '';
+    $tileId = isset($input['tile_id']) ? (int)$input['tile_id'] : 0;
+    $userId = Auth::id();
 
-// Route to appropriate handler
-switch ($tileType) {
+    // Validate tile ID for notes (required)
+    if ($tileType === 'notes' && $tileId <= 0) {
+        jsonError('Invalid tile ID for notes tile', 400);
+    }
+
+    // Route to appropriate handler
+    switch ($tileType) {
     case 'email':
         jsonResponse(getEmailData($userId));
         break;
@@ -48,8 +67,33 @@ switch ($tileType) {
     case 'weather':
         jsonResponse(getWeatherData($userId));
         break;
+    case 'notes':
+        try {
+            jsonResponse(getNotesData($userId, $tileId));
+        } catch (Exception $e) {
+            logMessage('Notes tile error: ' . $e->getMessage(), 'error');
+            jsonError('Failed to load notes: ' . $e->getMessage(), 500);
+        }
+        break;
+    case 'notes-list':
+        try {
+            jsonResponse(getNotesListData($userId));
+        } catch (Exception $e) {
+            logMessage('Notes list error: ' . $e->getMessage(), 'error');
+            jsonError('Failed to load notes list: ' . $e->getMessage(), 500);
+        }
+        break;
+    case 'bookmarks':
+        try {
+            jsonResponse(getBookmarksData($userId));
+        } catch (Exception $e) {
+            logMessage('Bookmarks error: ' . $e->getMessage(), 'error');
+            jsonError('Failed to load bookmarks: ' . $e->getMessage(), 500);
+        }
+        break;
     default:
         jsonError('Unknown tile type', 400);
+    }
 }
 
 /**
@@ -63,8 +107,33 @@ function getEmailData(int $userId): array
         return ['connected' => false];
     }
 
-    // Try to get from cache first
-    $cacheKey = "email_{$userId}";
+    // Ensure column exists so SELECT never throws (e.g. if user never visited settings)
+    try {
+        $col = Database::query("SHOW COLUMNS FROM users LIKE 'email_preview_chars'");
+        if (empty($col)) {
+            Database::execute('ALTER TABLE users ADD COLUMN email_preview_chars INT UNSIGNED DEFAULT 320 AFTER updated_at');
+        }
+    } catch (Exception $e) {
+        // ignore
+    }
+
+    // User's preview length affects cached output, so read it before cache lookup
+    $previewFullLen = 320;
+    try {
+        $userRow = Database::queryOne('SELECT email_preview_chars FROM users WHERE id = ?', [$userId]);
+        if ($userRow !== null) {
+            // Support different column name casing from driver
+            $raw = $userRow['email_preview_chars'] ?? $userRow['EMAIL_PREVIEW_CHARS'] ?? 320;
+            if ($raw !== null && $raw !== '') {
+                $previewFullLen = max(100, min(2000, (int) $raw));
+            }
+        }
+    } catch (Exception $e) {
+        // use default 320
+    }
+
+    // Cache key includes preview length so changing the setting gets fresh data
+    $cacheKey = "email_{$userId}_{$previewFullLen}";
     $cached = cache($cacheKey);
 
     if ($cached !== null) {
@@ -72,38 +141,67 @@ function getEmailData(int $userId): array
     }
 
     try {
-        $response = callMicrosoftGraph($token, '/me/mailFolders/inbox/messages', [
-            '$top' => 10,
-            '$select' => 'subject,from,receivedDateTime,isRead,bodyPreview',
-            '$orderby' => 'receivedDateTime desc',
-            '$filter' => 'isRead eq false'
-        ]);
-
-        $emails = [];
-        foreach ($response['value'] ?? [] as $email) {
-            $emails[] = [
-                'id' => $email['id'],
-                'subject' => $email['subject'] ?? '(No Subject)',
-                'from' => $email['from']['emailAddress']['name'] ?? $email['from']['emailAddress']['address'] ?? 'Unknown',
-                'preview' => truncate($email['bodyPreview'] ?? '', 100),
-                'receivedTime' => formatRelativeTime($email['receivedDateTime']),
-                'isRead' => $email['isRead'] ?? false,
-            ];
+        // Microsoft bodyPreview is limited to 255 chars; only request full body when user wants more
+        $needBody = $previewFullLen > 255;
+        $select = 'id,subject,from,receivedDateTime,isRead,bodyPreview,flag';
+        if ($needBody) {
+            $select .= ',body';
         }
 
-        // Get unread count
-        $countResponse = callMicrosoftGraph($token, '/me/mailFolders/inbox', [
-            '$select' => 'unreadItemCount'
+        // Fetch recent messages (no filter – flag filter not supported on API); filter in PHP for unread or flagged
+        $response = callMicrosoftGraph($token, '/me/mailFolders/inbox/messages', [
+            '$top' => 200,
+            '$select' => $select,
+            '$orderby' => 'receivedDateTime desc',
         ]);
+
+        $candidates = [];
+        foreach ($response['value'] ?? [] as $email) {
+            $isRead = $email['isRead'] ?? true;
+            $flagStatus = $email['flag']['flagStatus'] ?? 'notFlagged';
+            $isFlagged = $flagStatus === 'flagged';
+            if (!$isRead || $isFlagged) {
+                $rawPreview = '';
+                if ($needBody && !empty($email['body']['content'])) {
+                    $content = $email['body']['content'];
+                    $contentType = $email['body']['contentType'] ?? 'text';
+                    $rawPreview = $contentType === 'html'
+                        ? trim(preg_replace('/\s+/', ' ', strip_tags($content)))
+                        : $content;
+                    $rawPreview = html_entity_decode($rawPreview, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                }
+                if ($rawPreview === '') {
+                    $rawPreview = $email['bodyPreview'] ?? '';
+                    $rawPreview = html_entity_decode($rawPreview, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                }
+                $preview = truncate($rawPreview, 100);
+                $previewFull = truncate($rawPreview, $previewFullLen);
+
+                $candidates[] = [
+                    'id' => $email['id'],
+                    'subject' => $email['subject'] ?? '(No Subject)',
+                    'from' => $email['from']['emailAddress']['name'] ?? $email['from']['emailAddress']['address'] ?? 'Unknown',
+                    'preview' => $preview,
+                    'previewFull' => $previewFull,
+                    'receivedDateTime' => $email['receivedDateTime'] ?? '',
+                    'receivedTime' => formatRelativeTime($email['receivedDateTime'] ?? ''),
+                    'isRead' => $isRead,
+                    'isFlagged' => $isFlagged,
+                ];
+            }
+        }
+        $emails = array_slice($candidates, 0, 10);
 
         $result = [
             'connected' => true,
             'emails' => $emails,
-            'unreadCount' => $countResponse['unreadItemCount'] ?? count($emails),
+            'unreadCount' => count($emails),
         ];
 
-        // Cache for 5 minutes
+        // Cache for 5 minutes (key with length for this user's preview setting)
         cache($cacheKey, fn() => $result, config('refresh.email', 300));
+        // Also cache under generic key so suggestions API can read email data
+        cache("email_{$userId}", fn() => $result, config('refresh.email', 300));
 
         return $result;
     } catch (Exception $e) {
@@ -173,6 +271,11 @@ function getCalendarData(int $userId): array
 
 /**
  * Get todo/tasks data from Microsoft Graph API
+ *
+ * Which tasks are included is controlled by config('microsoft.todo_show'):
+ * - 'all'     = all incomplete tasks from the default Tasks list (single list, v1.0). Reliable.
+ * - 'my_day' = only tasks added to "My Day" in To Do. Tries Graph beta $filter=isInMyDay eq true
+ *              across all lists; if beta/filter fails, falls back to same as 'all'.
  */
 function getTodoData(int $userId): array
 {
@@ -189,45 +292,104 @@ function getTodoData(int $userId): array
         return $cached;
     }
 
+    $todoShow = config('microsoft.todo_show', 'all');
+    $tasksSource = 'all_incomplete'; // will be set to 'my_day' if we successfully use My Day filter
+
     try {
-        // Get default task list
-        $listsResponse = callMicrosoftGraph($token, '/me/todo/lists', [
-            '$top' => 1
-        ]);
+        $listsResponse = callMicrosoftGraph($token, '/me/todo/lists', ['$top' => 50]);
 
         if (empty($listsResponse['value'])) {
-            return ['connected' => true, 'tasks' => []];
+            return ['connected' => true, 'tasks' => [], 'tasks_source' => $tasksSource, 'tasks_source_label' => 'No lists'];
         }
 
-        $listId = $listsResponse['value'][0]['id'];
+        $firstListId = $listsResponse['value'][0]['id'];
+        $tasksResponse = ['value' => []];
 
-        // Get tasks
-        $tasksResponse = callMicrosoftGraph($token, "/me/todo/lists/{$listId}/tasks", [
-            '$filter' => 'status ne \'completed\'',
-            '$select' => 'title,importance,dueDateTime,status',
-            '$orderby' => 'importance desc,dueDateTime/dateTime',
-            '$top' => 15
-        ]);
+        if ($todoShow === 'my_day') {
+            // Try to get only "My Day" tasks: beta API with $filter per list
+            try {
+                $allTasks = [];
+                foreach ($listsResponse['value'] as $list) {
+                    $listId = $list['id'];
+                    $resp = callMicrosoftGraphBeta($token, "/me/todo/lists/{$listId}/tasks", [
+                        '$top' => 100,
+                        '$filter' => "isInMyDay eq true and status ne 'completed'",
+                    ]);
+                    foreach ($resp['value'] ?? [] as $task) {
+                        $allTasks[] = $task;
+                    }
+                }
+                $tasksResponse = ['value' => $allTasks];
+                $tasksSource = 'my_day';
+            } catch (Exception $e) {
+                logMessage('Todo My Day filter not supported, using all incomplete: ' . $e->getMessage(), 'info');
+                $todoShow = 'all';
+            }
+        }
 
+        if ($todoShow === 'all' && empty($tasksResponse['value'])) {
+            // All incomplete tasks from the default (first) list only
+            try {
+                $tasksResponse = callMicrosoftGraphBeta($token, "/me/todo/lists/{$firstListId}/tasks", ['$top' => 100]);
+            } catch (Exception $e) {
+                $tasksResponse = callMicrosoftGraph($token, "/me/todo/lists/{$firstListId}/tasks", ['$top' => 50]);
+            }
+        }
+
+        // Build task list: exclude completed; when source was My Day filter we already have only My Day
         $tasks = [];
         foreach ($tasksResponse['value'] ?? [] as $task) {
-            $dueDate = null;
-            if (!empty($task['dueDateTime']['dateTime'])) {
-                $dueDate = formatDate($task['dueDateTime']['dateTime'], 'M j');
+            if (($task['status'] ?? '') === 'completed') {
+                continue;
             }
-
+            if ($tasksSource === 'my_day') {
+                // Already filtered by API; optional extra check if isInMyDay present
+                if (array_key_exists('isInMyDay', $task) && !($task['isInMyDay'] ?? false)) {
+                    continue;
+                }
+            }
+            $dueDate = null;
+            $dueDateTime = null;
+            if (!empty($task['dueDateTime']['dateTime'])) {
+                $dueDateTime = $task['dueDateTime']['dateTime'];
+                $dueDate = formatDate($dueDateTime, 'M j');
+            }
             $tasks[] = [
                 'id' => $task['id'],
                 'title' => $task['title'] ?? '(No Title)',
                 'importance' => $task['importance'] ?? 'normal',
                 'dueDate' => $dueDate,
+                'dueDateTime' => $dueDateTime,
                 'completed' => ($task['status'] ?? '') === 'completed',
             ];
         }
 
+        usort($tasks, function ($a, $b) {
+            $impOrder = ['high' => 0, 'normal' => 1, 'low' => 2];
+            $cmp = ($impOrder[$a['importance']] ?? 1) <=> ($impOrder[$b['importance']] ?? 1);
+            if ($cmp !== 0) {
+                return $cmp;
+            }
+            if ($a['dueDateTime'] === null && $b['dueDateTime'] === null) {
+                return 0;
+            }
+            if ($a['dueDateTime'] === null) {
+                return 1;
+            }
+            if ($b['dueDateTime'] === null) {
+                return -1;
+            }
+            return strcmp($a['dueDateTime'], $b['dueDateTime']);
+        });
+        $tasks = array_slice($tasks, 0, 15);
+
+        $tasksSourceLabel = $tasksSource === 'my_day' ? 'My Day' : 'All incomplete (default list)';
+
         $result = [
             'connected' => true,
             'tasks' => $tasks,
+            'tasks_source' => $tasksSource,
+            'tasks_source_label' => $tasksSourceLabel,
         ];
 
         cache($cacheKey, fn() => $result, config('refresh.todo', 300));
@@ -235,7 +397,10 @@ function getTodoData(int $userId): array
         return $result;
     } catch (Exception $e) {
         logMessage('Todo fetch error: ' . $e->getMessage(), 'error');
-        return ['connected' => true, 'error' => 'Failed to fetch tasks'];
+        return [
+            'connected' => true,
+            'error' => 'Failed to fetch tasks: ' . $e->getMessage(),
+        ];
     }
 }
 
@@ -428,11 +593,27 @@ function refreshMicrosoftToken(string $refreshToken): ?array
 }
 
 /**
- * Call Microsoft Graph API
+ * Call Microsoft Graph API (v1.0)
  */
 function callMicrosoftGraph(string $token, string $endpoint, array $params = []): array
 {
-    $url = 'https://graph.microsoft.com/v1.0' . $endpoint;
+    return callMicrosoftGraphBase($token, $endpoint, $params, 'v1.0');
+}
+
+/**
+ * Call Microsoft Graph API (beta) - for properties like todoTask.isInMyDay
+ */
+function callMicrosoftGraphBeta(string $token, string $endpoint, array $params = []): array
+{
+    return callMicrosoftGraphBase($token, $endpoint, $params, 'beta');
+}
+
+/**
+ * Call Microsoft Graph API (shared implementation)
+ */
+function callMicrosoftGraphBase(string $token, string $endpoint, array $params, string $version): array
+{
+    $url = 'https://graph.microsoft.com/' . $version . $endpoint;
 
     if (!empty($params)) {
         $url .= '?' . http_build_query($params);
@@ -700,6 +881,132 @@ function getWeatherIcon(int $code): string
 }
 
 /**
+ * Get notes data for a specific tile
+ */
+function getNotesData(int $userId, int $tileId): array
+{
+    if ($tileId <= 0) {
+        return ['notes' => '', 'saved_at' => null, 'current_note_id' => null];
+    }
+
+    // Get notes from tile settings JSON
+    $tile = Database::queryOne(
+        'SELECT settings, updated_at FROM tiles WHERE id = ? AND user_id = ?',
+        [$tileId, $userId]
+    );
+
+    if (!$tile) {
+        // Tile doesn't exist or doesn't belong to user - return empty notes
+        return ['notes' => '', 'saved_at' => null, 'current_note_id' => null];
+    }
+
+    $settings = json_decode($tile['settings'] ?? '{}', true);
+    if (!is_array($settings)) {
+        $settings = [];
+    }
+    
+    $notes = $settings['notes'] ?? '';
+    $currentNoteId = isset($settings['current_note_id']) ? (int)$settings['current_note_id'] : null;
+
+    return [
+        'notes' => $notes,
+        'saved_at' => $tile['updated_at'] ?? null,
+        'current_note_id' => $currentNoteId
+    ];
+}
+
+/**
+ * Get bookmarks for the user
+ */
+function getBookmarksData(int $userId): array
+{
+    try {
+        $tableExists = Database::queryOne("SHOW TABLES LIKE 'bookmarks'");
+        if (empty($tableExists)) {
+            return ['bookmarks' => []];
+        }
+    } catch (Exception $e) {
+        return ['bookmarks' => []];
+    }
+
+    $rows = Database::query(
+        'SELECT id, url, title, created_at FROM bookmarks WHERE user_id = ? ORDER BY created_at DESC',
+        [$userId]
+    );
+
+    return [
+        'bookmarks' => array_map(function ($row) {
+            return [
+                'id' => (int) $row['id'],
+                'url' => $row['url'],
+                'title' => $row['title'],
+                'created_at' => $row['created_at'] ?? null,
+            ];
+        }, $rows),
+    ];
+}
+
+/**
+ * Get list of saved notes for the user
+ */
+function getNotesListData(int $userId): array
+{
+    // Ensure notes table exists (migration)
+    try {
+        $tableExists = Database::queryOne("SHOW TABLES LIKE 'notes'");
+        if (empty($tableExists)) {
+            // Check if foreign key constraint is supported
+            $fkCheck = Database::queryOne("SELECT @@foreign_key_checks");
+            $fkEnabled = ($fkCheck['@@foreign_key_checks'] ?? 1) == 1;
+            
+            if ($fkEnabled) {
+                Database::execute("
+                    CREATE TABLE notes (
+                        id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+                        user_id INT UNSIGNED NOT NULL,
+                        content TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        INDEX idx_user_created (user_id, created_at DESC)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ");
+            } else {
+                Database::execute("
+                    CREATE TABLE notes (
+                        id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+                        user_id INT UNSIGNED NOT NULL,
+                        content TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        INDEX idx_user_created (user_id, created_at DESC)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ");
+            }
+        }
+    } catch (Exception $e) {
+        error_log('Notes table migration: ' . $e->getMessage());
+    }
+
+    // Get all notes for user, ordered by most recent first
+    $notes = Database::query(
+        'SELECT id, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+        [$userId]
+    );
+
+    return [
+        'notes' => array_map(function($note) {
+            return [
+                'id' => (int)$note['id'],
+                'content' => $note['content'],
+                'created_at' => $note['created_at'],
+                'preview' => mb_substr($note['content'], 0, 100) . (mb_strlen($note['content']) > 100 ? '...' : '')
+            ];
+        }, $notes)
+    ];
+}
+
+/**
  * Format relative time
  */
 function formatRelativeTime(string $datetime): string
@@ -721,4 +1028,22 @@ function formatRelativeTime(string $datetime): string
     } else {
         return formatDate($datetime, 'M j');
     }
+}
+
+// Cron warm-up: refresh cache for the requested user (notes and AI suggestions are excluded)
+if (defined('CRON_WARM_USER_ID')) {
+    $uid = CRON_WARM_USER_ID;
+    cacheClear("email_{$uid}");
+    cacheClear("calendar_{$uid}");
+    cacheClear("todo_{$uid}");
+    cacheClear("crm_{$uid}");
+    cacheClear("weather_{$uid}");
+    getEmailData($uid);
+    getCalendarData($uid);
+    getTodoData($uid);
+    getCrmData($uid);
+    getWeatherData($uid);
+    header('Content-Type: application/json');
+    echo json_encode(['ok' => true, 'user_id' => $uid]);
+    exit;
 }

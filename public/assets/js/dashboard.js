@@ -74,10 +74,12 @@
     function loadAllTiles(loadSuggestionsAfter = false) {
         const tiles = document.querySelectorAll('.tile[data-tile-type]');
 
-        // Reset counters if we're tracking for suggestions (only count tiles we actually load with trackForSuggestions=true)
+        // Reset counters if we're tracking for suggestions
         if (loadSuggestionsAfter) {
             tilesLoadedCount = 0;
             totalTilesToLoad = 0;
+
+            // Count tiles we actually load (exclude claude, notes, notes-list, bookmarks)
             tiles.forEach(tile => {
                 const t = tile.dataset.tileType;
                 if (t && t !== 'claude' && t !== 'notes' && t !== 'notes-list' && t !== 'bookmarks') {
@@ -102,14 +104,6 @@
         // If no tiles to load, trigger suggestions immediately
         if (loadSuggestionsAfter && totalTilesToLoad === 0) {
             loadAISuggestions();
-        }
-        // Fallback: if suggestions still showing "Analyzing..." after 4s, run anyway (in case tiles never all completed)
-        if (loadSuggestionsAfter) {
-            setTimeout(() => {
-                if (document.querySelector('.suggestions-loading')) {
-                    loadAISuggestions();
-                }
-            }, 4000);
         }
     }
 
@@ -167,12 +161,15 @@
      * Load data for a single tile
      */
     async function loadTileData(tile, trackForSuggestions = false) {
-        if (!tile || !tile.dataset) return;
         const tileType = tile.dataset.tileType;
         const tileId = parseInt(tile.dataset.tileId) || 0;
         const content = tile.querySelector('.tile-content');
         const refreshBtn = tile.querySelector('.tile-refresh');
-        if (!content) return;
+        
+        // Debug logging for notes tiles
+        if (tileType === 'notes') {
+            console.log('Loading notes tile:', { tileType, tileId, element: tile });
+        }
 
         // Show loading state
         content.innerHTML = `
@@ -225,12 +222,7 @@
                 console.error('Tile API error:', { tileType, tileId, error: data.error });
                 showTileError(content, data.error);
             } else {
-                try {
-                    renderTileContent(tileType, content, data, tile);
-                } catch (renderErr) {
-                    console.error('Error rendering tile:', { tileType, tileId, error: renderErr });
-                    showTileError(content, 'Failed to display data. Please try again.');
-                }
+                renderTileContent(tileType, content, data, tile);
             }
         } catch (error) {
             console.error('Error loading tile:', { tileType, tileId, error });
@@ -259,17 +251,17 @@
      * Show error state in tile
      */
     function showTileError(container, message) {
-        container.innerHTML = `
-            <div class="tile-error">
-                <svg class="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                </svg>
-                <p>${escapeHtml(message)}</p>
-                <button class="tile-retry-btn" onclick="this.closest('.tile').querySelector('.tile-refresh').click()">
-                    Try Again
-                </button>
-            </div>
-        `;
+        container.innerHTML = "<div class=\"tile-error\"><svg class=\"w-8 h-8 mb-2\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z\"/></svg><p>" + escapeHtml(message) + "</p><button type=\"button\" class=\"tile-retry-btn\" data-retry=\"tile\">Try Again</button></div>";
+        var retryBtn = container.querySelector(".tile-retry-btn");
+        if (retryBtn) {
+            retryBtn.addEventListener("click", function() {
+                var tile = container.closest(".tile");
+                if (tile) {
+                    var refreshBtn = tile.querySelector(".tile-refresh");
+                    if (refreshBtn) refreshBtn.click();
+                }
+            });
+        }
     }
 
     /**
@@ -326,19 +318,14 @@
                     <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                     </svg>
-                    <p class="empty-state-text">No flagged or unread emails</p>
+                    <p class="empty-state-text">No unread emails</p>
                 </div>
             `;
             return;
         }
 
         const emailsHtml = data.emails.map(email => `
-            <li class="email-item email-item-clickable"
-                data-email-subject="${escapeHtml(email.subject)}"
-                data-email-from="${escapeHtml(email.from)}"
-                data-email-preview-full="${escapeHtml(email.previewFull || email.preview || '')}"
-                data-email-received-time="${escapeHtml(email.receivedTime || '')}"
-                data-email-received-datetime="${escapeHtml(email.receivedDateTime || '')}">
+            <li class="email-item ${email.isRead ? '' : 'unread'}">
                 <div class="flex justify-between items-start">
                     <span class="email-from">${escapeHtml(email.from)}</span>
                     <span class="email-time">${escapeHtml(email.receivedTime)}</span>
@@ -353,94 +340,11 @@
                 ${emailsHtml}
             </ul>
             ${data.unreadCount > data.emails.length ? `
-                <p class="email-list-more">+${data.unreadCount - data.emails.length} more</p>
+                <p class="text-xs text-gray-500 mt-3 text-center">
+                    +${data.unreadCount - data.emails.length} more unread
+                </p>
             ` : ''}
         `;
-
-        container.querySelectorAll('.email-item-clickable').forEach(item => {
-            item.addEventListener('click', function() {
-                const email = {
-                    subject: this.dataset.emailSubject || '(No Subject)',
-                    from: this.dataset.emailFrom || '',
-                    previewFull: this.dataset.emailPreviewFull || '',
-                    receivedTime: this.dataset.emailReceivedTime || '',
-                    receivedDateTime: this.dataset.emailReceivedDatetime || ''
-                };
-                openEmailDetailOverlay(email);
-            });
-        });
-    }
-
-    /**
-     * Format ISO date/time for display
-     */
-    function formatEmailDateTime(isoString) {
-        if (!isoString) return '';
-        try {
-            const d = new Date(isoString);
-            if (isNaN(d.getTime())) return '';
-            return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-        } catch (e) {
-            return '';
-        }
-    }
-
-    /**
-     * Open email detail overlay (same blurred-background style as task/notes popup)
-     */
-    function openEmailDetailOverlay(email) {
-        let overlay = document.getElementById('email-detail-overlay');
-        if (!overlay) {
-            overlay = document.createElement('div');
-            overlay.className = 'email-detail-overlay';
-            overlay.id = 'email-detail-overlay';
-            overlay.innerHTML = `
-                <div class="email-detail-modal">
-                    <div class="email-detail-modal-header">
-                        <h3 class="email-detail-modal-title" id="email-detail-subject"></h3>
-                        <button type="button" class="email-detail-modal-close" id="email-detail-close-btn" title="Close">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="email-detail-modal-body">
-                        <div class="email-detail-meta" id="email-detail-meta"></div>
-                        <div class="email-detail-preview" id="email-detail-preview"></div>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(overlay);
-
-            document.getElementById('email-detail-close-btn').addEventListener('click', closeEmailDetailOverlay);
-            overlay.addEventListener('click', function(e) {
-                if (e.target === overlay) closeEmailDetailOverlay();
-            });
-            document.addEventListener('keydown', function emailDetailEscape(e) {
-                if (e.key === 'Escape' && document.getElementById('email-detail-overlay')?.classList.contains('show')) {
-                    closeEmailDetailOverlay();
-                }
-            });
-        }
-
-        document.getElementById('email-detail-subject').textContent = email.subject;
-        const dateTimeDisplay = formatEmailDateTime(email.receivedDateTime) || email.receivedTime || '';
-        document.getElementById('email-detail-meta').innerHTML = `
-            <div class="email-detail-meta-row"><strong>From:</strong> ${escapeHtml(email.from)}</div>
-            ${dateTimeDisplay ? `<div class="email-detail-meta-row"><strong>Date:</strong> ${escapeHtml(dateTimeDisplay)}</div>` : ''}
-        `;
-        document.getElementById('email-detail-preview').textContent = email.previewFull || 'No preview.';
-
-        requestAnimationFrame(() => overlay.classList.add('show'));
-    }
-
-    /**
-     * Close email detail overlay
-     */
-    function closeEmailDetailOverlay() {
-        const overlay = document.getElementById('email-detail-overlay');
-        if (!overlay) return;
-        overlay.classList.remove('show');
     }
 
     /**
@@ -498,24 +402,19 @@
         }
 
         if (!data.tasks || data.tasks.length === 0) {
-            const emptySource = data.tasks_source_label ? ` <span class="task-list-source">(${escapeHtml(data.tasks_source_label)})</span>` : '';
             container.innerHTML = `
                 <div class="empty-state">
                     <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
                     </svg>
-                    <p class="empty-state-text">No tasks${emptySource}</p>
+                    <p class="empty-state-text">No tasks</p>
                 </div>
             `;
             return;
         }
 
         const tasksHtml = data.tasks.map(task => `
-            <li class="task-item task-item-clickable ${task.completed ? 'completed' : ''}"
-                data-task-id="${escapeHtml(task.id)}"
-                data-task-title="${escapeHtml(task.title)}"
-                data-task-importance="${escapeHtml(task.importance || 'normal')}"
-                data-task-due-date="${escapeHtml(task.dueDate || '')}">
+            <li class="task-item ${task.completed ? 'completed' : ''}">
                 <div class="task-checkbox ${task.completed ? 'completed' : ''}" data-task-id="${task.id}"></div>
                 <div class="task-content">
                     <div class="task-title">
@@ -527,87 +426,7 @@
             </li>
         `).join('');
 
-        const sourceLabel = data.tasks_source_label ? `<p class="task-list-source">Showing: ${escapeHtml(data.tasks_source_label)}</p>` : '';
-        container.innerHTML = `<ul class="task-list">${tasksHtml}</ul>${sourceLabel}`;
-
-        container.querySelectorAll('.task-item-clickable').forEach(item => {
-            item.addEventListener('click', function(e) {
-                if (e.target.closest('.task-checkbox')) return;
-                const task = {
-                    id: this.dataset.taskId,
-                    title: this.dataset.taskTitle || '(No Title)',
-                    importance: this.dataset.taskImportance || 'normal',
-                    dueDate: this.dataset.taskDueDate || null
-                };
-                openTaskDetailOverlay(task);
-            });
-        });
-    }
-
-    /**
-     * Open task detail overlay (same blurred-background style as notes popup)
-     */
-    function openTaskDetailOverlay(task) {
-        let overlay = document.getElementById('task-detail-overlay');
-        if (!overlay) {
-            overlay = document.createElement('div');
-            overlay.className = 'task-detail-overlay';
-            overlay.id = 'task-detail-overlay';
-            overlay.innerHTML = `
-                <div class="task-detail-modal">
-                    <div class="task-detail-modal-header">
-                        <h3 class="task-detail-modal-title">Task details</h3>
-                        <button type="button" class="task-detail-modal-close" id="task-detail-close-btn" title="Close">
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="task-detail-modal-body">
-                        <p class="task-detail-task-title" id="task-detail-task-title"></p>
-                        <div class="task-detail-meta" id="task-detail-meta"></div>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(overlay);
-
-            document.getElementById('task-detail-close-btn').addEventListener('click', closeTaskDetailOverlay);
-            overlay.addEventListener('click', function(e) {
-                if (e.target === overlay) closeTaskDetailOverlay();
-            });
-            document.addEventListener('keydown', function taskDetailEscape(e) {
-                if (e.key === 'Escape' && document.getElementById('task-detail-overlay')?.classList.contains('show')) {
-                    closeTaskDetailOverlay();
-                }
-            });
-        }
-
-        document.getElementById('task-detail-task-title').textContent = task.title;
-        const metaEl = document.getElementById('task-detail-meta');
-        const importanceLabel = { high: 'High', normal: 'Normal', low: 'Low' }[task.importance] || task.importance;
-        metaEl.innerHTML = `
-            <div class="task-detail-meta-row">
-                <span class="task-detail-meta-label">Priority</span>
-                <span class="task-detail-priority ${task.importance}">${escapeHtml(importanceLabel)}</span>
-            </div>
-            ${task.dueDate ? `
-            <div class="task-detail-meta-row">
-                <span class="task-detail-meta-label">Due</span>
-                <span>${escapeHtml(task.dueDate)}</span>
-            </div>
-            ` : ''}
-        `;
-
-        requestAnimationFrame(() => overlay.classList.add('show'));
-    }
-
-    /**
-     * Close task detail overlay
-     */
-    function closeTaskDetailOverlay() {
-        const overlay = document.getElementById('task-detail-overlay');
-        if (!overlay) return;
-        overlay.classList.remove('show');
+        container.innerHTML = `<ul class="task-list">${tasksHtml}</ul>`;
     }
 
     /**
@@ -738,49 +557,14 @@
      * Render notes tile
      */
     function renderNotesTile(container, data, tileElement) {
-        const tileId = tileElement.dataset.tileId;
-        const notes = data.notes || '';
-        const savedAt = data.saved_at || null;
-        const currentNoteId = data.current_note_id || null;
+        var tileId = tileElement.dataset.tileId;
+        var notes = data.notes || "";
+        var currentNoteId = data.current_note_id || null;
+        var saveTitle = currentNoteId ? "Update existing note" : "Save note to list and clear";
+        var saveLabel = currentNoteId ? "Update Note" : "Save to List";
+        var noteIdAttr = currentNoteId !== null && currentNoteId !== undefined ? String(currentNoteId) : "";
 
-        container.innerHTML = `
-            <div class="notes-container">
-                <textarea 
-                    id="notes-textarea-${tileId}" 
-                    class="notes-textarea" 
-                    placeholder="Jot down your notes here... They will be saved automatically."
-                    rows="8"
-                >${escapeHtml(notes)}</textarea>
-                <div class="notes-footer">
-                    <div class="notes-status">
-                        <span class="notes-saved-indicator" id="notes-saved-${tileId}"></span>
-                    </div>
-                    <div class="notes-footer-actions">
-                        <button 
-                            id="notes-open-popup-btn-${tileId}" 
-                            class="notes-open-popup-btn"
-                            title="Open in larger window"
-                        >
-                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
-                            </svg>
-                            Expand
-                        </button>
-                        <button 
-                            id="notes-save-btn-${tileId}" 
-                            class="notes-save-btn"
-                            title="${currentNoteId ? 'Update existing note' : 'Save note to list and clear'}"
-                            data-current-note-id="${currentNoteId || ''}"
-                        >
-                            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                            </svg>
-                            ${currentNoteId ? 'Update Note' : 'Save to List'}
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `;
+        container.innerHTML = "<div class=\"notes-container\"><textarea id=\"notes-textarea-" + tileId + "\" class=\"notes-textarea\" placeholder=\"Jot down your notes here... They will be saved automatically.\" rows=\"8\">" + escapeHtml(notes) + "</textarea><div class=\"notes-footer\"><div class=\"notes-status\"><span class=\"notes-saved-indicator\" id=\"notes-saved-" + tileId + "\"></span></div><div class=\"notes-footer-actions\"><button id=\"notes-open-popup-btn-" + tileId + "\" class=\"notes-open-popup-btn\" title=\"Open in larger window\"><svg fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4\"/></svg> Expand</button><button id=\"notes-save-btn-" + tileId + "\" class=\"notes-save-btn\" title=\"" + saveTitle + "\" data-current-note-id=\"" + noteIdAttr + "\"><svg class=\"w-4 h-4 mr-1\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\"/></svg> " + saveLabel + "</button></div></div></div>";
 
         // Setup auto-save
         setupNotesAutoSave(tileId);
@@ -796,57 +580,31 @@
      * Render notes list tile
      */
     function renderNotesListTile(container, data) {
-        const notes = data.notes || [];
+        var notes = data.notes || [];
 
         if (notes.length === 0) {
-            container.innerHTML = `
-                <div class="notes-list-empty">
-                    <p class="text-gray-500 text-sm">No saved notes yet.</p>
-                    <p class="text-gray-400 text-xs mt-1">Save notes from the Quick Notes tile to see them here.</p>
-                </div>
-            `;
+            container.innerHTML = "<div class=\"notes-list-empty\"><p class=\"text-gray-500 text-sm\">No saved notes yet.</p><p class=\"text-gray-400 text-xs mt-1\">Save notes from the Quick Notes tile to see them here.</p></div>";
             return;
         }
 
-        const notesHtml = notes.map(note => {
-            const date = new Date(note.created_at);
-            const dateStr = date.toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
-                year: date.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
+        var notesHtml = notes.map(function(note) {
+            var date = new Date(note.created_at);
+            var dateStr = date.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: date.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined
             });
-            const timeStr = date.toLocaleTimeString('en-US', { 
-                hour: 'numeric', 
-                minute: '2-digit',
+            var timeStr = date.toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
                 hour12: true
             });
+            return "<div class=\"notes-list-item\" data-note-id=\"" + note.id + "\"><div class=\"notes-list-preview\">" + escapeHtml(note.preview) + "</div><div class=\"notes-list-date\">" + escapeHtml(dateStr) + " at " + escapeHtml(timeStr) + "</div></div>";
+        }).join("");
 
-            return `
-                <div class="notes-list-item" data-note-id="${note.id}">
-                    <div class="notes-list-item-content">
-                        <div class="notes-list-preview">${escapeHtml(note.preview)}</div>
-                        <div class="notes-list-date">${escapeHtml(dateStr)} at ${escapeHtml(timeStr)}</div>
-                    </div>
-                    <button type="button" class="notes-list-delete" data-note-id="${note.id}" title="Delete note" aria-label="Delete note">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                        </svg>
-                    </button>
-                </div>
-            `;
-        }).join('');
+        container.innerHTML = "<div class=\"notes-list-container\"><div class=\"notes-list\">" + notesHtml + "</div></div>";
 
-        container.innerHTML = `
-            <div class="notes-list-container">
-                <div class="notes-list">
-                    ${notesHtml}
-                </div>
-            </div>
-        `;
-
-        // Setup click handlers to load notes and delete buttons
         setupNotesListClickHandlers();
-        setupNotesListDeleteHandlers(container);
     }
 
     /**
@@ -856,7 +614,7 @@
         try {
             return new URL(url).hostname;
         } catch (_) {
-            return '';
+            return "";
         }
     }
 
@@ -864,25 +622,25 @@
      * Render bookmarks tile (string concat to avoid nested template literal parse errors)
      */
     function renderBookmarksTile(container, data, tileElement) {
-        const bookmarks = data.bookmarks || [];
-        const tileId = tileElement ? parseInt(tileElement.dataset.tileId) || 0;
+        var bookmarks = data.bookmarks || [], tileId = tileElement ? parseInt(tileElement.dataset.tileId, 10) : 0;
+        if (tileId !== tileId) tileId = 0;
 
-        const faviconUrl = (url) => {
-            const domain = getBookmarkDomain(url);
+        var faviconUrl = function(url) {
+            var domain = getBookmarkDomain(url);
             if (!domain) return "";
             return "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(domain) + "&sz=32";
         };
 
-        let bookmarksHtml;
+        var bookmarksHtml;
         if (bookmarks.length === 0) {
             bookmarksHtml = "<div class=\"bookmarks-empty\"><p class=\"text-gray-500 text-sm\">No bookmarks yet.</p><p class=\"text-gray-400 text-xs mt-1\">Add a URL below to get started.</p></div>";
         } else {
-            const items = bookmarks.filter(function(b) { return b && (b.url || b.id); }).map(function(b) {
-                const url = b.url || "";
-                const domain = getBookmarkDomain(url);
-                const favicon = faviconUrl(url);
-                const label = b.title || domain || url;
-                const imgOrPlaceholder = favicon
+            var items = bookmarks.filter(function(b) { return b && (b.url || b.id); }).map(function(b) {
+                var url = b.url || "";
+                var domain = getBookmarkDomain(url);
+                var favicon = faviconUrl(url);
+                var label = b.title || domain || url;
+                var imgOrPlaceholder = favicon
                     ? "<img class=\"bookmark-favicon\" src=\"" + escapeHtml(favicon) + "\" alt=\"\" width=\"32\" height=\"32\">"
                     : "<span class=\"bookmark-favicon-placeholder\"></span>";
                 return "<div class=\"bookmark-item\" data-bookmark-id=\"" + b.id + "\"><a class=\"bookmark-link\" href=\"" + escapeHtml(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"" + escapeHtml(label) + "\">" + imgOrPlaceholder + "</a><button type=\"button\" class=\"bookmark-delete\" data-bookmark-id=\"" + b.id + "\" title=\"Remove bookmark\" aria-label=\"Remove bookmark\"><svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"/></svg></button></div>";
@@ -900,35 +658,35 @@
      * Setup add-bookmark form
      */
     function setupBookmarksAddForm(container, tileElement) {
-        const form = container.querySelector('.bookmarks-add-form');
+        const form = container.querySelector(".bookmarks-add-form");
         if (!form) return;
 
-        form.addEventListener('submit', async function(e) {
+        form.addEventListener("submit", async function(e) {
             e.preventDefault();
-            const input = form.querySelector('.bookmarks-url-input');
-            const url = (input && input.value) ? input.value.trim() : '';
+            const input = form.querySelector(".bookmarks-url-input");
+            const url = (input && input.value) ? input.value.trim() : "";
             if (!url) return;
 
-            const addBtn = form.querySelector('.bookmarks-add-btn');
+            const addBtn = form.querySelector(".bookmarks-add-btn");
             if (addBtn) addBtn.disabled = true;
 
             try {
                 const response = await fetch(CONFIG.bookmarksEndpoint, {
-                    method: 'POST',
+                    method: "POST",
                     headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRF-TOKEN': CONFIG.csrfToken,
-                        'X-Requested-With': 'XMLHttpRequest'
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": CONFIG.csrfToken,
+                        "X-Requested-With": "XMLHttpRequest"
                     },
-                    body: JSON.stringify({ action: 'add', url })
+                    body: JSON.stringify({ action: "add", url: url })
                 });
                 const data = await response.json();
-                if (!data.success) throw new Error(data.error || 'Failed to add');
-                if (input) input.value = '';
+                if (!data.success) throw new Error(data.error || "Failed to add");
+                if (input) input.value = "";
                 if (tileElement) loadTileData(tileElement, false);
             } catch (err) {
-                console.error('Add bookmark error:', err);
-                alert(err.message || 'Failed to add bookmark.');
+                console.error("Add bookmark error:", err);
+                alert(err.message || "Failed to add bookmark.");
             } finally {
                 if (addBtn) addBtn.disabled = false;
             }
@@ -939,30 +697,30 @@
      * Setup delete handlers for bookmarks
      */
     function setupBookmarksDeleteHandlers(container, tileElement) {
-        container.querySelectorAll('.bookmark-delete').forEach(btn => {
-            btn.addEventListener('click', async function(e) {
+        container.querySelectorAll(".bookmark-delete").forEach(function(btn) {
+            btn.addEventListener("click", async function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                const id = parseInt(this.dataset.bookmarkId);
+                const id = parseInt(this.dataset.bookmarkId, 10);
                 if (!id) return;
-                if (!confirm('Remove this bookmark?')) return;
+                if (!confirm("Remove this bookmark?")) return;
 
                 try {
                     const response = await fetch(CONFIG.bookmarksEndpoint, {
-                        method: 'POST',
+                        method: "POST",
                         headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRF-TOKEN': CONFIG.csrfToken,
-                            'X-Requested-With': 'XMLHttpRequest'
+                            "Content-Type": "application/json",
+                            "X-CSRF-TOKEN": CONFIG.csrfToken,
+                            "X-Requested-With": "XMLHttpRequest"
                         },
-                        body: JSON.stringify({ action: 'delete', id })
+                        body: JSON.stringify({ action: "delete", id: id })
                     });
                     const data = await response.json();
-                    if (!data.success) throw new Error(data.error || 'Failed to delete');
+                    if (!data.success) throw new Error(data.error || "Failed to delete");
                     if (tileElement) loadTileData(tileElement, false);
                 } catch (err) {
-                    console.error('Delete bookmark error:', err);
-                    alert('Failed to remove bookmark.');
+                    console.error("Delete bookmark error:", err);
+                    alert("Failed to remove bookmark.");
                 }
             });
         });
@@ -1071,10 +829,7 @@
         const items = document.querySelectorAll('.notes-list-item');
         
         items.forEach(item => {
-            item.addEventListener('click', async function(e) {
-                // Don't load when clicking the delete button
-                if (e.target.closest('.notes-list-delete')) return;
-
+            item.addEventListener('click', async function() {
                 const noteId = parseInt(this.dataset.noteId);
                 if (!noteId) return;
 
@@ -1122,58 +877,6 @@
     }
 
     /**
-     * Setup delete button handlers for notes list items
-     */
-    function setupNotesListDeleteHandlers(container) {
-        if (!container) return;
-        const deleteButtons = container.querySelectorAll('.notes-list-delete');
-        const notesListTile = container.closest('.tile');
-
-        deleteButtons.forEach(btn => {
-            btn.addEventListener('click', async function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                const noteId = parseInt(this.dataset.noteId);
-                if (!noteId) return;
-                if (!confirm('Delete this note? This cannot be undone.')) return;
-
-                try {
-                    const response = await fetch(CONFIG.notesEndpoint, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRF-TOKEN': CONFIG.csrfToken,
-                            'X-Requested-With': 'XMLHttpRequest'
-                        },
-                        body: JSON.stringify({
-                            action: 'delete_note',
-                            note_id: noteId
-                        })
-                    });
-
-                    const data = await response.json();
-                    if (!data.success) {
-                        throw new Error(data.error || 'Failed to delete note');
-                    }
-
-                    // Refresh the notes list tile
-                    if (notesListTile) {
-                        loadTileData(notesListTile, false);
-                    }
-                    // If Quick Notes had this note loaded, refresh it so it shows empty / updated state
-                    const notesTile = document.querySelector('.tile[data-tile-type="notes"]');
-                    if (notesTile) {
-                        loadTileData(notesTile, false);
-                    }
-                } catch (error) {
-                    console.error('Error deleting note:', error);
-                    alert('Failed to delete note. Please try again.');
-                }
-            });
-        });
-    }
-
-    /**
      * Refresh the notes list tile
      */
     function refreshNotesListTile() {
@@ -1211,7 +914,7 @@
         const noteIdAttr = (currentNoteId !== null && currentNoteId !== undefined) ? String(currentNoteId) : "";
         const saveBtnLabel = (currentNoteId !== null && currentNoteId !== "") ? "Update Note" : "Save to List";
 
-        // Create overlay HTML (string concat to avoid template literal quote parsing issues)
+        // Create overlay HTML
         const overlay = document.createElement('div');
         overlay.className = 'notes-overlay';
         overlay.id = "notes-overlay-" + tileId;
@@ -1471,9 +1174,8 @@
 
             // Disable button during save
             saveBtn.disabled = true;
-            saveBtn.innerHTML = isUpdating 
-                ? '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Updating...'
-                : '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" class="w-4 h-4"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Saving...';
+            var svg = "<svg fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\" class=\"w-4 h-4\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M5 13l4 4L19 7\"/></svg> ";
+            saveBtn.innerHTML = isUpdating ? svg + "Updating..." : svg + "Saving...";
 
             try {
                 const response = await fetch(CONFIG.notesEndpoint, {
@@ -1763,18 +1465,14 @@
 
         try {
             console.log('Fetching AI suggestions from:', CONFIG.suggestionsEndpoint);
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 45000);
             const response = await fetch(CONFIG.suggestionsEndpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRF-TOKEN': CONFIG.csrfToken,
                     'X-Requested-With': 'XMLHttpRequest'
-                },
-                signal: controller.signal
+                }
             });
-            clearTimeout(timeoutId);
 
             console.log('Suggestions response status:', response.status, response.statusText);
 
@@ -1810,9 +1508,7 @@
             }
         } catch (error) {
             console.error('Error loading suggestions:', error);
-            const errorMsg = error.name === 'AbortError'
-                ? 'Suggestions took too long. Check that the Claude API key is set in config and try again.'
-                : (error.message || 'Unable to load suggestions. Please try again.');
+            const errorMsg = error.message || 'Unable to load suggestions. Please try again.';
             renderSuggestionsError(suggestionsArea, errorMsg);
         }
     }
@@ -1828,7 +1524,7 @@
             let debugStr = '';
             if (data.debug) {
                 const d = data.debug;
-                debugStr = `<br><small style="color:#666;font-size:10px;">Debug: CRM=${d.crm_connected}, Weather=${d.weather_configured}, Email=${d.email_connected}</small>`;
+                debugStr = "<br><small class=\"suggestions-debug\">Debug: CRM=" + (d.crm_connected ? "1" : "0") + ", Weather=" + (d.weather_configured ? "1" : "0") + ", Email=" + (d.email_connected ? "1" : "0") + "</small>";
             }
             container.innerHTML = `
                 <div class="suggestions-empty">

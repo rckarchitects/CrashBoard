@@ -141,7 +141,7 @@ function handleCallback(array $config): void
     cacheClear("todo_{$userId}");
 
     Session::setFlash('success', 'Microsoft 365 connected successfully!');
-    redirect('/settings.php');
+    redirect('/index.php');
 }
 
 /**

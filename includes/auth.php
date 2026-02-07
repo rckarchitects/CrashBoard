@@ -236,17 +236,17 @@ class Auth
     private static function createDefaultTiles(int $userId): void
     {
         $defaultTiles = [
-            ['tile_type' => 'email', 'title' => 'Inbox', 'position' => 1],
-            ['tile_type' => 'calendar', 'title' => 'Calendar', 'position' => 2],
-            ['tile_type' => 'todo', 'title' => 'Tasks', 'position' => 3],
-            ['tile_type' => 'crm', 'title' => 'CRM Actions', 'position' => 4],
-            ['tile_type' => 'claude', 'title' => 'AI Assistant', 'position' => 5],
+            ['tile_type' => 'email', 'title' => 'Inbox', 'position' => 1, 'column_span' => 1],
+            ['tile_type' => 'calendar', 'title' => 'Calendar', 'position' => 2, 'column_span' => 1],
+            ['tile_type' => 'todo', 'title' => 'Tasks', 'position' => 3, 'column_span' => 1],
+            ['tile_type' => 'crm', 'title' => 'CRM Actions', 'position' => 4, 'column_span' => 1],
+            ['tile_type' => 'claude', 'title' => 'AI Assistant', 'position' => 5, 'column_span' => 2],
         ];
 
         foreach ($defaultTiles as $tile) {
             Database::execute(
-                'INSERT INTO tiles (user_id, tile_type, title, position) VALUES (?, ?, ?, ?)',
-                [$userId, $tile['tile_type'], $tile['title'], $tile['position']]
+                'INSERT INTO tiles (user_id, tile_type, title, position, column_span) VALUES (?, ?, ?, ?, ?)',
+                [$userId, $tile['tile_type'], $tile['title'], $tile['position'], $tile['column_span']]
             );
         }
     }

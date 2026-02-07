@@ -199,6 +199,183 @@ if (isPost()) {
             cacheClear("weather_{$userId}");
             Session::setFlash('success', 'Weather settings removed.');
             break;
+
+        case 'save_theme':
+            // Ensure theme columns exist (migration)
+            try {
+                $columns = Database::query("SHOW COLUMNS FROM users LIKE 'theme_primary'");
+                if (empty($columns)) {
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_primary VARCHAR(7) DEFAULT "#0ea5e9" AFTER updated_at');
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_secondary VARCHAR(7) DEFAULT "#6366f1" AFTER theme_primary');
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_background VARCHAR(7) DEFAULT "#f3f4f6" AFTER theme_secondary');
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_font VARCHAR(50) DEFAULT "system" AFTER theme_background');
+                }
+                // Check for header and tile theme columns
+                $headerBgCol = Database::query("SHOW COLUMNS FROM users LIKE 'theme_header_bg'");
+                if (empty($headerBgCol)) {
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_header_bg VARCHAR(7) DEFAULT "#ffffff" AFTER theme_font');
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_header_text VARCHAR(7) DEFAULT "#111827" AFTER theme_header_bg');
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_tile_bg VARCHAR(7) DEFAULT "#ffffff" AFTER theme_header_text');
+                    Database::execute('ALTER TABLE users ADD COLUMN theme_tile_text VARCHAR(7) DEFAULT "#374151" AFTER theme_tile_bg');
+                }
+            } catch (Exception $e) {
+                error_log('Theme migration: ' . $e->getMessage());
+            }
+
+            // Validate and sanitize theme values
+            $primary = trim(post('theme_primary', '#0ea5e9'));
+            $secondary = trim(post('theme_secondary', '#6366f1'));
+            $background = trim(post('theme_background', '#f3f4f6'));
+            $font = trim(post('theme_font', 'system'));
+            $headerBg = trim(post('theme_header_bg', '#ffffff'));
+            $headerText = trim(post('theme_header_text', '#111827'));
+            $tileBg = trim(post('theme_tile_bg', '#ffffff'));
+            $tileText = trim(post('theme_tile_text', '#374151'));
+
+            // Validate hex colors
+            $colorFields = [
+                'primary' => $primary,
+                'secondary' => $secondary,
+                'background' => $background,
+                'header_bg' => $headerBg,
+                'header_text' => $headerText,
+                'tile_bg' => $tileBg,
+                'tile_text' => $tileText,
+            ];
+            
+            foreach ($colorFields as $field => $value) {
+                if (!preg_match('/^#[0-9A-Fa-f]{6}$/', $value)) {
+                    Session::setFlash('error', "Invalid {$field} color format.");
+                    redirect('/settings.php');
+                }
+            }
+
+            // Validate font
+            $allowedFonts = ['system', 'serif', 'mono', 'inter', 'roboto', 'open-sans', 'lato', 'montserrat', 'raleway', 'playfair'];
+            if (!in_array($font, $allowedFonts)) {
+                $font = 'system';
+            }
+
+            // Save to database
+            try {
+                Database::execute(
+                    'UPDATE users SET theme_primary = ?, theme_secondary = ?, theme_background = ?, theme_font = ?, theme_header_bg = ?, theme_header_text = ?, theme_tile_bg = ?, theme_tile_text = ? WHERE id = ?',
+                    [$primary, $secondary, $background, $font, $headerBg, $headerText, $tileBg, $tileText, $userId]
+                );
+                Session::setFlash('success', 'Theme preferences saved successfully.');
+            } catch (Exception $e) {
+                Session::setFlash('error', 'Failed to save theme: ' . $e->getMessage());
+            }
+            break;
+
+        case 'add_notes_tile':
+            // Check if notes tile already exists
+            $existing = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'notes']
+            );
+
+            if ($existing) {
+                Session::setFlash('error', 'Notes tile already exists on your dashboard.');
+            } else {
+                // Get the max position to add at the end
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'notes', 'Quick Notes', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Notes tile added successfully! Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add notes tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_notes_list_tile':
+            // Check if notes-list tile already exists
+            $existing = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'notes-list']
+            );
+
+            if ($existing) {
+                Session::setFlash('error', 'Notes list tile already exists on your dashboard.');
+            } else {
+                // Get the max position to add at the end
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'notes-list', 'Saved Notes', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Notes list tile added successfully! Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add notes list tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_bookmarks_tile':
+            $existing = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'bookmarks']
+            );
+            if ($existing) {
+                Session::setFlash('error', 'Bookmarks tile already exists on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'bookmarks', 'Bookmarks', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Bookmarks tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add bookmarks tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'save_email_preview':
+            // Ensure email_preview_chars column exists (migration)
+            try {
+                $col = Database::query("SHOW COLUMNS FROM users LIKE 'email_preview_chars'");
+                if (empty($col)) {
+                    Database::execute('ALTER TABLE users ADD COLUMN email_preview_chars INT UNSIGNED DEFAULT 320 AFTER updated_at');
+                }
+            } catch (Exception $e) {
+                error_log('Email preview chars migration: ' . $e->getMessage());
+            }
+
+            $chars = (int) post('email_preview_chars', 320);
+            $chars = max(100, min(2000, $chars));
+
+            try {
+                Database::execute(
+                    'UPDATE users SET email_preview_chars = ? WHERE id = ?',
+                    [$chars, $userId]
+                );
+                cacheClear("email_{$userId}_%");
+                Session::setFlash('success', 'Email preview length saved.');
+            } catch (Exception $e) {
+                Session::setFlash('error', 'Failed to save: ' . $e->getMessage());
+            }
+            break;
     }
 
     redirect('/settings.php');
@@ -207,6 +384,36 @@ if (isPost()) {
 // Get flash messages
 $success = Session::flash('success');
 $error = Session::flash('error');
+
+// Ensure email_preview_chars column exists (migration)
+try {
+    $emailPreviewCol = Database::query("SHOW COLUMNS FROM users LIKE 'email_preview_chars'");
+    if (empty($emailPreviewCol)) {
+        Database::execute('ALTER TABLE users ADD COLUMN email_preview_chars INT UNSIGNED DEFAULT 320 AFTER updated_at');
+    }
+} catch (Exception $e) {
+    error_log('Email preview chars migration: ' . $e->getMessage());
+}
+
+// Get user theme and email preview preferences from database
+$userTheme = Database::queryOne(
+    'SELECT theme_primary, theme_secondary, theme_background, theme_font, theme_header_bg, theme_header_text, theme_tile_bg, theme_tile_text, email_preview_chars FROM users WHERE id = ?',
+    [$userId]
+);
+
+$emailPreviewChars = (int) ($userTheme['email_preview_chars'] ?? 320);
+$emailPreviewChars = max(100, min(2000, $emailPreviewChars));
+
+$themePreview = [
+    'primary' => $userTheme['theme_primary'] ?? '#0ea5e9',
+    'secondary' => $userTheme['theme_secondary'] ?? '#6366f1',
+    'background' => $userTheme['theme_background'] ?? '#f3f4f6',
+    'font' => $userTheme['theme_font'] ?? 'system',
+    'header_bg' => $userTheme['theme_header_bg'] ?? '#ffffff',
+    'header_text' => $userTheme['theme_header_text'] ?? '#111827',
+    'tile_bg' => $userTheme['theme_tile_bg'] ?? '#ffffff',
+    'tile_text' => $userTheme['theme_tile_text'] ?? '#374151',
+];
 
 // Get cache status for each tile type
 function getCacheStatus(int $userId, string $type): ?array
@@ -304,12 +511,92 @@ $pageTitle = 'Settings - CrashBoard';
             }
         }
     </script>
-    <link rel="stylesheet" href="/assets/css/app.css">
+    <link rel="stylesheet" href="<?= asset('css/app.css') ?>">
+    <?php
+    // Load Google Fonts for web fonts
+    $fontUrls = [
+        'inter' => 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
+        'roboto' => 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap',
+        'open-sans' => 'https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap',
+        'lato' => 'https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap',
+        'montserrat' => 'https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap',
+        'raleway' => 'https://fonts.googleapis.com/css2?family=Raleway:wght@400;600;700&display=swap',
+        'playfair' => 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap',
+    ];
+    if (isset($fontUrls[$themePreview['font']])): ?>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="<?= $fontUrls[$themePreview['font']] ?>" rel="stylesheet">
+    <?php endif; ?>
+    <style>
+        :root {
+            --cb-primary: <?= e($themePreview['primary']) ?>;
+            --cb-secondary: <?= e($themePreview['secondary']) ?>;
+            --cb-background: <?= e($themePreview['background']) ?>;
+            --cb-header-bg: <?= e($themePreview['header_bg']) ?>;
+            --cb-header-text: <?= e($themePreview['header_text']) ?>;
+            --cb-tile-bg: <?= e($themePreview['tile_bg']) ?>;
+            --cb-tile-text: <?= e($themePreview['tile_text']) ?>;
+        }
+        body {
+            background-color: var(--cb-background);
+            <?php
+            $fontFamilies = [
+                'system' => 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                'inter' => '"Inter", system-ui, sans-serif',
+                'roboto' => '"Roboto", system-ui, sans-serif',
+                'open-sans' => '"Open Sans", system-ui, sans-serif',
+                'lato' => '"Lato", system-ui, sans-serif',
+                'montserrat' => '"Montserrat", system-ui, sans-serif',
+                'raleway' => '"Raleway", system-ui, sans-serif',
+                'playfair' => '"Playfair Display", Georgia, serif',
+                'serif' => 'Georgia, "Times New Roman", serif',
+                'mono' => 'Menlo, Monaco, "Courier New", monospace',
+            ];
+            ?>
+            font-family: <?= $fontFamilies[$themePreview['font']] ?? $fontFamilies['system'] ?>;
+        }
+        /* Header styling */
+        header {
+            background-color: var(--cb-header-bg) !important;
+            color: var(--cb-header-text) !important;
+        }
+        header * {
+            color: var(--cb-header-text) !important;
+        }
+        /* Tile styling */
+        .tile {
+            background-color: var(--cb-tile-bg) !important;
+            color: var(--cb-tile-text) !important;
+        }
+        .tile-header {
+            background-color: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background)) !important;
+        }
+        .tile-title, .tile-content {
+            color: var(--cb-tile-text) !important;
+        }
+        /* Override Tailwind primary colors with CSS variables */
+        .bg-primary-500, .bg-primary-600, .bg-primary-700 {
+            background-color: var(--cb-primary) !important;
+        }
+        .text-primary-500, .text-primary-600, .text-primary-700 {
+            color: var(--cb-primary) !important;
+        }
+        .border-primary-500, .border-primary-600 {
+            border-color: var(--cb-primary) !important;
+        }
+        .ring-primary-500, .ring-primary-600 {
+            --tw-ring-color: var(--cb-primary) !important;
+        }
+        .hover\:bg-primary-700:hover {
+            background-color: color-mix(in srgb, var(--cb-primary) 90%, black) !important;
+        }
+    </style>
 </head>
-<body class="h-full bg-gray-100">
+<body class="h-full" style="background-color: var(--cb-background);">
     <!-- Header -->
     <header class="bg-white shadow-sm border-b border-gray-200">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="max-w-[1536px] mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between items-center h-16">
                 <div class="flex items-center">
                     <a href="/index.php" class="text-gray-500 hover:text-gray-700 mr-4">
@@ -324,7 +611,7 @@ $pageTitle = 'Settings - CrashBoard';
     </header>
 
     <!-- Main Content -->
-    <main class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="max-w-[1536px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <?php if ($success): ?>
         <div class="mb-6 rounded-lg bg-green-50 border border-green-200 p-4">
             <div class="flex">
@@ -464,6 +751,37 @@ $pageTitle = 'Settings - CrashBoard';
             </div>
         </section>
 
+        <!-- Email (Inbox) preview -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Email (Inbox)</h2>
+                <p class="mt-1 text-sm text-gray-500">How much of each email to show in the popup when you click a message in the Inbox tile.</p>
+            </div>
+            <div class="p-6">
+                <form action="" method="POST" class="flex flex-wrap items-end gap-4">
+                    <?= Session::csrfField() ?>
+                    <input type="hidden" name="action" value="save_email_preview">
+                    <div>
+                        <label for="email_preview_chars" class="block text-sm font-medium text-gray-700">Preview length in popup (characters)</label>
+                        <input
+                            type="number"
+                            id="email_preview_chars"
+                            name="email_preview_chars"
+                            value="<?= (int) $emailPreviewChars ?>"
+                            min="100"
+                            max="2000"
+                            step="1"
+                            class="mt-1 block w-32 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                        >
+                        <p class="mt-1 text-xs text-gray-500">100–2000. List view shows the first 100 characters. Values over 255 load full message bodies (inbox may load slightly slower).</p>
+                    </div>
+                    <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500">
+                        Save
+                    </button>
+                </form>
+            </div>
+        </section>
+
         <!-- Weather Settings -->
         <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
             <div class="p-6 border-b border-gray-200">
@@ -565,6 +883,120 @@ $pageTitle = 'Settings - CrashBoard';
             </div>
         </section>
 
+        <!-- Tiles Management -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Tiles Management</h2>
+                <p class="mt-1 text-sm text-gray-500">Add additional tiles to your dashboard.</p>
+            </div>
+
+            <div class="p-6">
+                <div class="space-y-4">
+                    <!-- Quick Notes Tile -->
+                    <div class="flex items-start justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
+                        <div class="flex items-start">
+                            <div class="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-sm font-medium text-gray-900">Quick Notes</h3>
+                                <p class="text-sm text-gray-500 mt-1">A simple note-taking tile with auto-save functionality. Perfect for jotting down quick thoughts and reminders.</p>
+                            </div>
+                        </div>
+                        <?php
+                        $hasNotesTile = Database::queryOne(
+                            'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                            [$userId, 'notes']
+                        );
+                        ?>
+                        <?php if ($hasNotesTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_notes_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Saved Notes List Tile -->
+                    <div class="flex items-start justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start">
+                            <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-sm font-medium text-gray-900">Saved Notes List</h3>
+                                <p class="text-sm text-gray-500 mt-1">View and access your saved notes. Click on any note to load it back into the Quick Notes tile for editing.</p>
+                            </div>
+                        </div>
+                        <?php
+                        $hasNotesListTile = Database::queryOne(
+                            'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                            [$userId, 'notes-list']
+                        );
+                        ?>
+                        <?php if ($hasNotesListTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_notes_list_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Bookmarks Tile -->
+                    <div class="flex items-start justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start">
+                            <div class="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-sm font-medium text-gray-900">Bookmarks</h3>
+                                <p class="text-sm text-gray-500 mt-1">Save URLs and open them from a tile. Shows favicons; click to open in a new tab.</p>
+                            </div>
+                        </div>
+                        <?php
+                        $hasBookmarksTile = Database::queryOne(
+                            'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                            [$userId, 'bookmarks']
+                        );
+                        ?>
+                        <?php if ($hasBookmarksTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_bookmarks_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Cache Management -->
         <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
             <div class="p-6 border-b border-gray-200">
@@ -627,6 +1059,290 @@ $pageTitle = 'Settings - CrashBoard';
                         </svg>
                         Clear All Caches
                     </button>
+                </form>
+            </div>
+        </section>
+
+        <!-- Tile refresh (Cron) -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Tile refresh (Cron)</h2>
+                <p class="mt-1 text-sm text-gray-500">Run a scheduled job to refresh tile data so the dashboard loads faster. Note tiles and the AI assistant (suggestions) are excluded and load only on page load or manual refresh.</p>
+            </div>
+            <div class="p-6">
+                <?php
+                $cronSecret = config('cron.secret', '');
+                $cronInterval = (int) config('cron.interval_minutes', 5);
+                $cronUrl = baseUrl('api/cron-refresh.php');
+                ?>
+                <?php if ($cronSecret === ''): ?>
+                <div class="rounded-lg bg-amber-50 border border-amber-200 p-4 mb-4">
+                    <p class="text-sm text-amber-800">Set <code class="bg-amber-100 px-1 rounded">cron.secret</code> in <code class="bg-amber-100 px-1 rounded">config/config.php</code> to enable cron refresh. Generate one with: <code class="bg-amber-100 px-1 rounded">php -r "echo bin2hex(random_bytes(16));"</code></p>
+                </div>
+                <?php endif; ?>
+                <div class="space-y-3 text-sm">
+                    <p class="font-medium text-gray-700">Cron URL (refreshes all users)</p>
+                    <p class="font-mono text-gray-800 break-all bg-gray-50 p-3 rounded-lg border border-gray-200"><?= e($cronUrl) ?>?token=<?= $cronSecret !== '' ? 'YOUR_SECRET' : '…' ?></p>
+                    <p class="text-gray-600">Pass the secret via query <code>token</code> or header <code>X-Cron-Token</code>. Keep the secret private.</p>
+                    <p class="font-medium text-gray-700 mt-4">Example (run every <?= $cronInterval ?> minutes)</p>
+                    <pre class="text-xs bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto">*/<?= $cronInterval ?> * * * * curl -s "<?= e($cronUrl) ?>?token=YOUR_SECRET"</pre>
+                    <p class="text-gray-500">Use the same base URL as your app (e.g. <code>https://your-domain.com</code>). If the cron runs on another host, set <code>cron.base_url</code> in config.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Appearance & Theme -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Appearance & Theme</h2>
+                <p class="mt-1 text-sm text-gray-500">
+                    Customize your dashboard's appearance with personalized colors and typography.
+                </p>
+            </div>
+
+            <div class="p-6">
+                <form action="" method="POST" class="space-y-6 max-w-xl">
+                    <?= Session::csrfField() ?>
+                    <input type="hidden" name="action" value="save_theme">
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div>
+                            <label for="theme_primary" class="block text-sm font-medium text-gray-700">
+                                Primary colour
+                            </label>
+                            <div class="mt-2 flex items-center space-x-3">
+                                <input
+                                    type="color"
+                                    id="theme_primary"
+                                    name="theme_primary"
+                                    value="<?= e($themePreview['primary']) ?>"
+                                    class="h-9 w-9 border border-gray-300 rounded cursor-pointer"
+                                >
+                                <input
+                                    type="text"
+                                    value="<?= e($themePreview['primary']) ?>"
+                                    class="mt-0.5 flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                                    oninput="document.getElementById('theme_primary').value = this.value"
+                                >
+                            </div>
+                            <p class="mt-1 text-xs text-gray-500">
+                                Used for buttons, highlights, and accents.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label for="theme_secondary" class="block text-sm font-medium text-gray-700">
+                                Secondary colour
+                            </label>
+                            <div class="mt-2 flex items-center space-x-3">
+                                <input
+                                    type="color"
+                                    id="theme_secondary"
+                                    name="theme_secondary"
+                                    value="<?= e($themePreview['secondary']) ?>"
+                                    class="h-9 w-9 border border-gray-300 rounded cursor-pointer"
+                                >
+                                <input
+                                    type="text"
+                                    value="<?= e($themePreview['secondary']) ?>"
+                                    class="mt-0.5 flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                                    oninput="document.getElementById('theme_secondary').value = this.value"
+                                >
+                            </div>
+                            <p class="mt-1 text-xs text-gray-500">
+                                Used for secondary buttons and badges.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div>
+                            <label for="theme_background" class="block text-sm font-medium text-gray-700">
+                                Background colour
+                            </label>
+                            <div class="mt-2 flex items-center space-x-3">
+                                <input
+                                    type="color"
+                                    id="theme_background"
+                                    name="theme_background"
+                                    value="<?= e($themePreview['background']) ?>"
+                                    class="h-9 w-9 border border-gray-300 rounded cursor-pointer"
+                                >
+                                <input
+                                    type="text"
+                                    value="<?= e($themePreview['background']) ?>"
+                                    class="mt-0.5 flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                                    oninput="document.getElementById('theme_background').value = this.value"
+                                >
+                            </div>
+                            <p class="mt-1 text-xs text-gray-500">
+                                Overall page background tone.
+                            </p>
+                        </div>
+
+                        <div>
+                            <label for="theme_font" class="block text-sm font-medium text-gray-700">
+                                Font family
+                            </label>
+                            <select
+                                id="theme_font"
+                                name="theme_font"
+                                class="mt-2 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                            >
+                                <option value="system" <?= $themePreview['font'] === 'system' ? 'selected' : '' ?>>
+                                    System Default (San-serif)
+                                </option>
+                                <option value="inter" <?= $themePreview['font'] === 'inter' ? 'selected' : '' ?>>
+                                    Inter (Modern Sans-serif)
+                                </option>
+                                <option value="roboto" <?= $themePreview['font'] === 'roboto' ? 'selected' : '' ?>>
+                                    Roboto (Clean & Readable)
+                                </option>
+                                <option value="open-sans" <?= $themePreview['font'] === 'open-sans' ? 'selected' : '' ?>>
+                                    Open Sans (Friendly)
+                                </option>
+                                <option value="lato" <?= $themePreview['font'] === 'lato' ? 'selected' : '' ?>>
+                                    Lato (Warm & Professional)
+                                </option>
+                                <option value="montserrat" <?= $themePreview['font'] === 'montserrat' ? 'selected' : '' ?>>
+                                    Montserrat (Geometric)
+                                </option>
+                                <option value="raleway" <?= $themePreview['font'] === 'raleway' ? 'selected' : '' ?>>
+                                    Raleway (Elegant)
+                                </option>
+                                <option value="playfair" <?= $themePreview['font'] === 'playfair' ? 'selected' : '' ?>>
+                                    Playfair Display (Classic Serif)
+                                </option>
+                                <option value="serif" <?= $themePreview['font'] === 'serif' ? 'selected' : '' ?>>
+                                    System Serif (Georgia)
+                                </option>
+                                <option value="mono" <?= $themePreview['font'] === 'mono' ? 'selected' : '' ?>>
+                                    Monospace (Code-style)
+                                </option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500">
+                                Controls typography across the entire dashboard.
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-200">
+                        <h3 class="text-sm font-semibold text-gray-900 mb-4">Header Styling</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                            <div>
+                                <label for="theme_header_bg" class="block text-sm font-medium text-gray-700">
+                                    Header background
+                                </label>
+                                <div class="mt-2 flex items-center space-x-3">
+                                    <input
+                                        type="color"
+                                        id="theme_header_bg"
+                                        name="theme_header_bg"
+                                        value="<?= e($themePreview['header_bg']) ?>"
+                                        class="h-9 w-9 border border-gray-300 rounded cursor-pointer"
+                                    >
+                                    <input
+                                        type="text"
+                                        value="<?= e($themePreview['header_bg']) ?>"
+                                        class="mt-0.5 flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                                        oninput="document.getElementById('theme_header_bg').value = this.value"
+                                    >
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Top navigation bar background color.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label for="theme_header_text" class="block text-sm font-medium text-gray-700">
+                                    Header text
+                                </label>
+                                <div class="mt-2 flex items-center space-x-3">
+                                    <input
+                                        type="color"
+                                        id="theme_header_text"
+                                        name="theme_header_text"
+                                        value="<?= e($themePreview['header_text']) ?>"
+                                        class="h-9 w-9 border border-gray-300 rounded cursor-pointer"
+                                    >
+                                    <input
+                                        type="text"
+                                        value="<?= e($themePreview['header_text']) ?>"
+                                        class="mt-0.5 flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                                        oninput="document.getElementById('theme_header_text').value = this.value"
+                                    >
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Text color in the header navigation.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t border-gray-200">
+                        <h3 class="text-sm font-semibold text-gray-900 mb-4">Tile Styling</h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                            <div>
+                                <label for="theme_tile_bg" class="block text-sm font-medium text-gray-700">
+                                    Tile background
+                                </label>
+                                <div class="mt-2 flex items-center space-x-3">
+                                    <input
+                                        type="color"
+                                        id="theme_tile_bg"
+                                        name="theme_tile_bg"
+                                        value="<?= e($themePreview['tile_bg']) ?>"
+                                        class="h-9 w-9 border border-gray-300 rounded cursor-pointer"
+                                    >
+                                    <input
+                                        type="text"
+                                        value="<?= e($themePreview['tile_bg']) ?>"
+                                        class="mt-0.5 flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                                        oninput="document.getElementById('theme_tile_bg').value = this.value"
+                                    >
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Background color for dashboard tiles.
+                                </p>
+                            </div>
+
+                            <div>
+                                <label for="theme_tile_text" class="block text-sm font-medium text-gray-700">
+                                    Tile text
+                                </label>
+                                <div class="mt-2 flex items-center space-x-3">
+                                    <input
+                                        type="color"
+                                        id="theme_tile_text"
+                                        name="theme_tile_text"
+                                        value="<?= e($themePreview['tile_text']) ?>"
+                                        class="h-9 w-9 border border-gray-300 rounded cursor-pointer"
+                                    >
+                                    <input
+                                        type="text"
+                                        value="<?= e($themePreview['tile_text']) ?>"
+                                        class="mt-0.5 flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-700 bg-white"
+                                        oninput="document.getElementById('theme_tile_text').value = this.value"
+                                    >
+                                </div>
+                                <p class="mt-1 text-xs text-gray-500">
+                                    Default text color within tiles.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between pt-2">
+                        <p class="text-xs text-gray-500">
+                            Your theme preferences are saved and applied across the entire dashboard.
+                        </p>
+                        <button
+                            type="submit"
+                            class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                        >
+                            Save Theme
+                        </button>
+                    </div>
                 </form>
             </div>
         </section>
@@ -724,5 +1440,25 @@ $pageTitle = 'Settings - CrashBoard';
             </div>
         </section>
     </main>
+    <script>
+        // Sync color inputs with text inputs
+        document.addEventListener('DOMContentLoaded', function() {
+            const colorInputs = ['theme_primary', 'theme_secondary', 'theme_background', 'theme_header_bg', 'theme_header_text', 'theme_tile_bg', 'theme_tile_text'];
+            colorInputs.forEach(id => {
+                const colorPicker = document.getElementById(id);
+                const textInput = colorPicker?.nextElementSibling;
+                if (colorPicker && textInput) {
+                    colorPicker.addEventListener('input', function() {
+                        textInput.value = this.value;
+                    });
+                    textInput.addEventListener('input', function() {
+                        if (/^#[0-9A-Fa-f]{6}$/.test(this.value)) {
+                            colorPicker.value = this.value;
+                        }
+                    });
+                }
+            });
+        });
+    </script>
 </body>
 </html>

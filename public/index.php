@@ -10,11 +10,46 @@ declare(strict_types=1);
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/auth.php';
 
+// If Microsoft sent the user here with OAuth callback params (wrong redirect_uri in Azure), send them to the real callback
+$oauthCode = $_GET['code'] ?? '';
+$oauthState = $_GET['state'] ?? '';
+if ($oauthCode !== '' && $oauthState !== '') {
+    redirect('/api/microsoft/callback.php?' . http_build_query(array_filter([
+        'code' => $oauthCode,
+        'state' => $oauthState,
+        'error' => $_GET['error'] ?? '',
+        'error_description' => $_GET['error_description'] ?? '',
+    ])));
+}
+
 // Require authentication
 Auth::require();
 
 $user = Auth::user();
 $userId = Auth::id();
+
+// Ensure row_span column exists (migration)
+try {
+    $columns = Database::query("SHOW COLUMNS FROM tiles LIKE 'row_span'");
+    if (empty($columns)) {
+        Database::execute('ALTER TABLE tiles ADD COLUMN row_span TINYINT UNSIGNED DEFAULT 1 AFTER column_span');
+    }
+} catch (Exception $e) {
+    // Migration failed, but continue - column might already exist
+    error_log('Row span migration: ' . $e->getMessage());
+}
+
+// Update existing tiles to have default row_span if NULL
+Database::execute(
+    'UPDATE tiles SET row_span = 1 WHERE user_id = ? AND (row_span IS NULL OR row_span = 0)',
+    [$userId]
+);
+
+// Update existing Claude tiles to be 2 columns wide (handle NULL or 1)
+Database::execute(
+    'UPDATE tiles SET column_span = 2 WHERE user_id = ? AND tile_type = ? AND (column_span IS NULL OR column_span = 1)',
+    [$userId, 'claude']
+);
 
 // Get user's tiles
 $tiles = Database::query(
@@ -31,6 +66,47 @@ $providers = [];
 foreach ($connectedProviders as $p) {
     $providers[$p['provider']] = $p['expires_at'];
 }
+
+// Flash messages (e.g. after connecting Microsoft)
+$flashSuccess = Session::flash('success');
+$flashError = Session::flash('error');
+
+// Get user theme preferences
+try {
+    $columns = Database::query("SHOW COLUMNS FROM users LIKE 'theme_primary'");
+    if (empty($columns)) {
+        Database::execute('ALTER TABLE users ADD COLUMN theme_primary VARCHAR(7) DEFAULT "#0ea5e9" AFTER updated_at');
+        Database::execute('ALTER TABLE users ADD COLUMN theme_secondary VARCHAR(7) DEFAULT "#6366f1" AFTER theme_primary');
+        Database::execute('ALTER TABLE users ADD COLUMN theme_background VARCHAR(7) DEFAULT "#f3f4f6" AFTER theme_secondary');
+        Database::execute('ALTER TABLE users ADD COLUMN theme_font VARCHAR(50) DEFAULT "system" AFTER theme_background');
+    }
+    // Check for header and tile theme columns
+    $headerBgCol = Database::query("SHOW COLUMNS FROM users LIKE 'theme_header_bg'");
+    if (empty($headerBgCol)) {
+        Database::execute('ALTER TABLE users ADD COLUMN theme_header_bg VARCHAR(7) DEFAULT "#ffffff" AFTER theme_font');
+        Database::execute('ALTER TABLE users ADD COLUMN theme_header_text VARCHAR(7) DEFAULT "#111827" AFTER theme_header_bg');
+        Database::execute('ALTER TABLE users ADD COLUMN theme_tile_bg VARCHAR(7) DEFAULT "#ffffff" AFTER theme_header_text');
+        Database::execute('ALTER TABLE users ADD COLUMN theme_tile_text VARCHAR(7) DEFAULT "#374151" AFTER theme_tile_bg');
+    }
+} catch (Exception $e) {
+    error_log('Theme migration: ' . $e->getMessage());
+}
+
+$userTheme = Database::queryOne(
+    'SELECT theme_primary, theme_secondary, theme_background, theme_font, theme_header_bg, theme_header_text, theme_tile_bg, theme_tile_text FROM users WHERE id = ?',
+    [$userId]
+);
+
+$theme = [
+    'primary' => $userTheme['theme_primary'] ?? '#0ea5e9',
+    'secondary' => $userTheme['theme_secondary'] ?? '#6366f1',
+    'background' => $userTheme['theme_background'] ?? '#f3f4f6',
+    'font' => $userTheme['theme_font'] ?? 'system',
+    'header_bg' => $userTheme['theme_header_bg'] ?? '#ffffff',
+    'header_text' => $userTheme['theme_header_text'] ?? '#111827',
+    'tile_bg' => $userTheme['theme_tile_bg'] ?? '#ffffff',
+    'tile_text' => $userTheme['theme_tile_text'] ?? '#374151',
+];
 
 $pageTitle = 'Dashboard - CrashBoard';
 $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to milliseconds
@@ -65,12 +141,99 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
             }
         }
     </script>
-    <link rel="stylesheet" href="/assets/css/app.css">
+    <link rel="stylesheet" href="<?= asset('css/app.css') ?>">
+    <?php
+    // Load Google Fonts for web fonts
+    $fontUrls = [
+        'inter' => 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap',
+        'roboto' => 'https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap',
+        'open-sans' => 'https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap',
+        'lato' => 'https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap',
+        'montserrat' => 'https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap',
+        'raleway' => 'https://fonts.googleapis.com/css2?family=Raleway:wght@400;600;700&display=swap',
+        'playfair' => 'https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap',
+    ];
+    if (isset($fontUrls[$theme['font']])): ?>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="<?= $fontUrls[$theme['font']] ?>" rel="stylesheet">
+    <?php endif; ?>
+    <style>
+        :root {
+            --cb-primary: <?= e($theme['primary']) ?>;
+            --cb-secondary: <?= e($theme['secondary']) ?>;
+            --cb-background: <?= e($theme['background']) ?>;
+            --cb-header-bg: <?= e($theme['header_bg']) ?>;
+            --cb-header-text: <?= e($theme['header_text']) ?>;
+            --cb-tile-bg: <?= e($theme['tile_bg']) ?>;
+            --cb-tile-text: <?= e($theme['tile_text']) ?>;
+        }
+        body {
+            background-color: var(--cb-background);
+            <?php
+            $fontFamilies = [
+                'system' => 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+                'inter' => '"Inter", system-ui, sans-serif',
+                'roboto' => '"Roboto", system-ui, sans-serif',
+                'open-sans' => '"Open Sans", system-ui, sans-serif',
+                'lato' => '"Lato", system-ui, sans-serif',
+                'montserrat' => '"Montserrat", system-ui, sans-serif',
+                'raleway' => '"Raleway", system-ui, sans-serif',
+                'playfair' => '"Playfair Display", Georgia, serif',
+                'serif' => 'Georgia, "Times New Roman", serif',
+                'mono' => 'Menlo, Monaco, "Courier New", monospace',
+            ];
+            ?>
+            font-family: <?= $fontFamilies[$theme['font']] ?? $fontFamilies['system'] ?>;
+        }
+        /* Header styling */
+        header {
+            background-color: var(--cb-header-bg) !important;
+            color: var(--cb-header-text) !important;
+        }
+        header * {
+            color: var(--cb-header-text) !important;
+        }
+        header a, header button {
+            color: var(--cb-header-text) !important;
+        }
+        header svg {
+            color: var(--cb-header-text) !important;
+        }
+        /* Tile styling */
+        .tile {
+            background-color: var(--cb-tile-bg) !important;
+            color: var(--cb-tile-text) !important;
+        }
+        .tile-header {
+            background-color: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background)) !important;
+            border-bottom-color: color-mix(in srgb, var(--cb-tile-text) 15%, transparent) !important;
+        }
+        .tile-title, .tile-content, .tile-content * {
+            color: var(--cb-tile-text) !important;
+        }
+        /* Override Tailwind primary colors with CSS variables */
+        .bg-primary-500, .bg-primary-600, .bg-primary-700 {
+            background-color: var(--cb-primary) !important;
+        }
+        .text-primary-500, .text-primary-600, .text-primary-700 {
+            color: var(--cb-primary) !important;
+        }
+        .border-primary-500, .border-primary-600 {
+            border-color: var(--cb-primary) !important;
+        }
+        .ring-primary-500, .ring-primary-600 {
+            --tw-ring-color: var(--cb-primary) !important;
+        }
+        .hover\:bg-primary-700:hover {
+            background-color: color-mix(in srgb, var(--cb-primary) 90%, black) !important;
+        }
+    </style>
 </head>
-<body class="h-full bg-gray-100">
+<body class="h-full" style="background-color: var(--cb-background);">
     <!-- Header -->
-    <header class="bg-white shadow-sm border-b border-gray-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <header class="shadow-sm border-b" style="background-color: var(--cb-header-bg); border-color: color-mix(in srgb, var(--cb-header-text) 20%, transparent);">
+        <div class="max-w-[1536px] mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between items-center h-16">
                 <div class="flex items-center">
                     <h1 class="text-xl font-bold text-gray-900">CrashBoard</h1>
@@ -104,7 +267,27 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
     </header>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="max-w-[1536px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <?php if ($flashSuccess): ?>
+        <div class="mb-6 rounded-lg bg-green-50 border border-green-200 p-4">
+            <div class="flex">
+                <svg class="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+                <p class="ml-3 text-sm text-green-700"><?= e($flashSuccess) ?></p>
+            </div>
+        </div>
+        <?php endif; ?>
+        <?php if ($flashError): ?>
+        <div class="mb-6 rounded-lg bg-red-50 border border-red-200 p-4">
+            <div class="flex">
+                <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                </svg>
+                <p class="ml-3 text-sm text-red-700"><?= e($flashError) ?></p>
+            </div>
+        </div>
+        <?php endif; ?>
         <!-- Connection Status Banner -->
         <?php if (empty($providers)): ?>
         <div class="mb-6 rounded-lg bg-amber-50 border border-amber-200 p-4">
@@ -177,10 +360,13 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
         </div>
 
         <!-- Tiles Grid -->
-        <div id="tilesContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        <div id="tilesContainer" class="tiles-grid">
             <?php if (empty($tiles)): ?>
             <!-- Default tiles when none configured -->
-            <div class="tile" data-tile-type="email" data-tile-id="0">
+            <div class="tile tile-resizable" data-tile-type="email" data-tile-id="0" data-column-span="1" data-row-span="1" style="grid-column: span 1; grid-row: span 1;">
+                <div class="tile-resize-handle tile-resize-handle-se" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-e" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-s" title="Drag to resize"></div>
                 <div class="tile-header">
                     <h3 class="tile-title">
                         <svg class="w-5 h-5 mr-2 text-primary-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -202,7 +388,10 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                 </div>
             </div>
 
-            <div class="tile" data-tile-type="calendar" data-tile-id="0">
+            <div class="tile tile-resizable" data-tile-type="calendar" data-tile-id="0" data-column-span="1" data-row-span="1" style="grid-column: span 1; grid-row: span 1;">
+                <div class="tile-resize-handle tile-resize-handle-se" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-e" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-s" title="Drag to resize"></div>
                 <div class="tile-header">
                     <h3 class="tile-title">
                         <svg class="w-5 h-5 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -224,7 +413,10 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                 </div>
             </div>
 
-            <div class="tile" data-tile-type="todo" data-tile-id="0">
+            <div class="tile tile-resizable" data-tile-type="todo" data-tile-id="0" data-column-span="1" data-row-span="1" style="grid-column: span 1; grid-row: span 1;">
+                <div class="tile-resize-handle tile-resize-handle-se" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-e" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-s" title="Drag to resize"></div>
                 <div class="tile-header">
                     <h3 class="tile-title">
                         <svg class="w-5 h-5 mr-2 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -246,7 +438,10 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                 </div>
             </div>
 
-            <div class="tile" data-tile-type="crm" data-tile-id="0">
+            <div class="tile tile-resizable" data-tile-type="crm" data-tile-id="0" data-column-span="1" data-row-span="1" style="grid-column: span 1; grid-row: span 1;">
+                <div class="tile-resize-handle tile-resize-handle-se" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-e" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-s" title="Drag to resize"></div>
                 <div class="tile-header">
                     <h3 class="tile-title">
                         <svg class="w-5 h-5 mr-2 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -268,7 +463,10 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                 </div>
             </div>
 
-            <div class="tile" data-tile-type="weather" data-tile-id="0">
+            <div class="tile tile-resizable" data-tile-type="weather" data-tile-id="0" data-column-span="1" data-row-span="1" style="grid-column: span 1; grid-row: span 1;">
+                <div class="tile-resize-handle tile-resize-handle-se" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-e" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-s" title="Drag to resize"></div>
                 <div class="tile-header">
                     <h3 class="tile-title">
                         <svg class="w-5 h-5 mr-2 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -290,7 +488,10 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                 </div>
             </div>
 
-            <div class="tile tile-wide" data-tile-type="claude" data-tile-id="0">
+            <div class="tile tile-resizable" data-tile-type="claude" data-tile-id="0" data-column-span="2" data-row-span="1" style="grid-column: span 2; grid-row: span 1;">
+                <div class="tile-resize-handle tile-resize-handle-se" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-e" title="Drag to resize"></div>
+                <div class="tile-resize-handle tile-resize-handle-s" title="Drag to resize"></div>
                 <div class="tile-header">
                     <h3 class="tile-title">
                         <svg class="w-5 h-5 mr-2 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -336,7 +537,21 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
             </div>
             <?php else: ?>
                 <?php foreach ($tiles as $tile): ?>
-                <div class="tile <?= $tile['column_span'] > 1 ? 'tile-wide' : '' ?>" data-tile-type="<?= e($tile['tile_type']) ?>" data-tile-id="<?= $tile['id'] ?>">
+                <?php
+                $columnSpan = isset($tile['column_span']) ? (int)$tile['column_span'] : ($tile['tile_type'] === 'claude' ? 2 : 1);
+                $rowSpan = isset($tile['row_span']) ? (int)$tile['row_span'] : 1;
+                $columnSpan = max(1, min(4, $columnSpan));
+                $rowSpan = max(1, min(4, $rowSpan));
+                ?>
+                <div class="tile tile-resizable" 
+                     data-tile-type="<?= e($tile['tile_type']) ?>" 
+                     data-tile-id="<?= $tile['id'] ?>"
+                     data-column-span="<?= $columnSpan ?>"
+                     data-row-span="<?= $rowSpan ?>"
+                     style="grid-column: span <?= $columnSpan ?>; grid-row: span <?= $rowSpan ?>;">
+                    <div class="tile-resize-handle tile-resize-handle-se" title="Drag to resize"></div>
+                    <div class="tile-resize-handle tile-resize-handle-e" title="Drag to resize"></div>
+                    <div class="tile-resize-handle tile-resize-handle-s" title="Drag to resize"></div>
                     <div class="tile-header">
                         <?php if ($tile['tile_type'] === 'claude'): ?>
                         <h3 class="tile-title">
@@ -346,6 +561,32 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
                             <?= e($tile['title'] ?? 'AI Assistant') ?>
                         </h3>
                         <button class="tile-refresh" title="Refresh Suggestions" onclick="window.refreshSuggestions()">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                        </button>
+                        <?php elseif ($tile['tile_type'] === 'notes'): ?>
+                        <h3 class="tile-title">
+                            <svg class="w-5 h-5 mr-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                            </svg>
+                            <?= e($tile['title'] ?? 'Quick Notes') ?>
+                        </h3>
+                        <?php elseif ($tile['tile_type'] === 'notes-list'): ?>
+                        <h3 class="tile-title">
+                            <svg class="w-5 h-5 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                            </svg>
+                            <?= e($tile['title'] ?? 'Saved Notes') ?>
+                        </h3>
+                        <?php elseif ($tile['tile_type'] === 'bookmarks'): ?>
+                        <h3 class="tile-title">
+                            <svg class="w-5 h-5 mr-2 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                            </svg>
+                            <?= e($tile['title'] ?? 'Bookmarks') ?>
+                        </h3>
+                        <button class="tile-refresh" title="Refresh">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                             </svg>
@@ -381,6 +622,6 @@ $refreshInterval = config('refresh.default_interval', 300) * 1000; // Convert to
         window.CSRF_TOKEN = '<?= Session::getCsrfToken() ?>';
         window.REFRESH_INTERVAL = <?= $refreshInterval ?>;
     </script>
-    <script src="/assets/js/dashboard.js"></script>
+    <script src="<?= dashboard_script_url() ?>"></script>
 </body>
 </html>

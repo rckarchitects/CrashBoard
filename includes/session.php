@@ -38,7 +38,7 @@ class Session
                 'domain' => '',
                 'secure' => $sessionConfig['secure'] ?? true,
                 'httponly' => $sessionConfig['httponly'] ?? true,
-                'samesite' => 'Strict',
+                'samesite' => $sessionConfig['samesite'] ?? 'Lax',
             ]);
 
             session_name($sessionConfig['name'] ?? 'crashboard_session');

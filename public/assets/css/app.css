@@ -296,7 +296,7 @@ body {
 }
 
 /* ============================================
-   Email Tile Styles (theme colours, no extra background)
+   Email Tile Styles
    ============================================ */
 
 .email-list {
@@ -309,23 +309,30 @@ body {
     display: flex;
     flex-direction: column;
     padding: 0.75rem 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 12%, transparent);
+    border-bottom: 1px solid #f3f4f6;
 }
 
 .email-item:last-child {
     border-bottom: none;
 }
 
+.email-item.unread {
+    background: #f0f9ff;
+    margin: 0 -1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+
 .email-from {
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--cb-tile-text);
+    color: #111827;
     margin-bottom: 0.25rem;
 }
 
 .email-subject {
     font-size: 0.875rem;
-    color: var(--cb-tile-text);
+    color: #374151;
     margin-bottom: 0.25rem;
     white-space: nowrap;
     overflow: hidden;
@@ -334,8 +341,7 @@ body {
 
 .email-preview {
     font-size: 0.75rem;
-    color: var(--cb-tile-text);
-    opacity: 0.85;
+    color: #6b7280;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -343,144 +349,7 @@ body {
 
 .email-time {
     font-size: 0.75rem;
-    color: var(--cb-tile-text);
-    opacity: 0.75;
-}
-
-.email-list-more {
-    font-size: 0.75rem;
-    color: var(--cb-tile-text);
-    opacity: 0.7;
-    margin: 0.75rem 0 0 0;
-    text-align: center;
-}
-
-.email-item-clickable {
-    cursor: pointer;
-}
-
-.email-item-clickable:hover {
-    background: color-mix(in srgb, var(--cb-tile-text) 5%, transparent);
-    border-radius: 0.375rem;
-}
-
-/* Email detail overlay (same styling as task detail / notes) */
-.email-detail-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease;
-}
-
-.email-detail-overlay.show {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.email-detail-modal {
-    background: var(--cb-tile-bg);
-    color: var(--cb-tile-text);
-    border-radius: 0.75rem;
-    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 10px 10px -5px rgb(0 0 0 / 0.04);
-    width: 90%;
-    max-width: 640px;
-    max-height: 90vh;
-    min-height: 400px;
-    display: flex;
-    flex-direction: column;
-    transform: scale(0.95);
-    transition: transform 0.2s ease;
-    overflow: hidden;
-}
-
-.email-detail-overlay.show .email-detail-modal {
-    transform: scale(1);
-}
-
-.email-detail-modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
-}
-
-.email-detail-modal-title {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--cb-tile-text);
-    margin: 0;
-    flex: 1;
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.email-detail-modal-close {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5rem;
-    background: transparent;
-    border: none;
-    border-radius: 0.375rem;
-    color: var(--cb-tile-text);
-    cursor: pointer;
-    opacity: 0.7;
-    flex-shrink: 0;
-}
-
-.email-detail-modal-close:hover {
-    background: color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
-    opacity: 1;
-}
-
-.email-detail-modal-body {
-    flex: 1;
-    min-height: 0;
-    padding: 1.5rem;
-    overflow-y: auto;
-}
-
-.email-detail-subject {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--cb-tile-text);
-    margin: 0 0 1rem 0;
-    line-height: 1.4;
-}
-
-.email-detail-meta {
-    font-size: 0.875rem;
-    color: var(--cb-tile-text);
-    opacity: 0.9;
-    margin-bottom: 1rem;
-}
-
-.email-detail-meta-row {
-    margin-bottom: 0.25rem;
-}
-
-.email-detail-preview {
-    font-size: 0.875rem;
-    color: var(--cb-tile-text);
-    opacity: 0.9;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-    padding-right: 0.25rem;
+    color: #9ca3af;
 }
 
 /* ============================================
@@ -601,15 +470,6 @@ body {
     font-size: 0.75rem;
     color: #9ca3af;
     margin-top: 0.125rem;
-}
-
-.task-list-source {
-    font-size: 0.7rem;
-    color: var(--cb-tile-text);
-    opacity: 0.6;
-    margin: 0.5rem 0 0 0;
-    padding-top: 0.5rem;
-    border-top: 1px solid color-mix(in srgb, var(--cb-tile-text) 12%, transparent);
 }
 
 .task-priority {
@@ -1172,6 +1032,11 @@ body {
 .suggestions-empty p {
     margin-bottom: 1rem;
     font-size: 0.875rem;
+}
+
+.suggestions-debug {
+    color: #666;
+    font-size: 10px;
 }
 
 .suggestions-error {
@@ -1866,157 +1731,6 @@ body {
     .notes-modal-textarea {
         min-height: calc(100vh - 250px);
     }
-}
-
-/* ============================================
-   Task Detail Popup Overlay (same styling as notes)
-   ============================================ */
-
-.task-detail-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(4px);
-    z-index: 9999;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 1rem;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease;
-}
-
-.task-detail-overlay.show {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-.task-detail-modal {
-    background: var(--cb-tile-bg);
-    color: var(--cb-tile-text);
-    border-radius: 0.75rem;
-    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 10px 10px -5px rgb(0 0 0 / 0.04);
-    width: 90%;
-    max-width: 480px;
-    max-height: 85vh;
-    display: flex;
-    flex-direction: column;
-    transform: scale(0.95);
-    transition: transform 0.2s ease;
-    overflow: hidden;
-}
-
-.task-detail-overlay.show .task-detail-modal {
-    transform: scale(1);
-}
-
-.task-detail-modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
-}
-
-.task-detail-modal-title {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--cb-tile-text);
-    margin: 0;
-}
-
-.task-detail-modal-close {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5rem;
-    background: transparent;
-    border: none;
-    border-radius: 0.375rem;
-    color: var(--cb-tile-text);
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease;
-    opacity: 0.7;
-}
-
-.task-detail-modal-close:hover {
-    background: color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
-    opacity: 1;
-}
-
-.task-detail-modal-close svg {
-    width: 1.25rem;
-    height: 1.25rem;
-}
-
-.task-detail-modal-body {
-    padding: 1.5rem;
-    overflow: auto;
-}
-
-.task-detail-task-title {
-    font-size: 1.125rem;
-    font-weight: 600;
-    color: var(--cb-tile-text);
-    margin: 0 0 1rem 0;
-    line-height: 1.4;
-}
-
-.task-detail-meta {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    font-size: 0.875rem;
-    color: var(--cb-tile-text);
-    opacity: 0.9;
-}
-
-.task-detail-meta-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.task-detail-meta-label {
-    font-weight: 500;
-    min-width: 5rem;
-}
-
-.task-detail-priority {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-}
-
-.task-detail-priority.high {
-    background: color-mix(in srgb, #dc2626 20%, transparent);
-    color: #dc2626;
-}
-
-.task-detail-priority.normal {
-    background: color-mix(in srgb, var(--cb-primary) 20%, transparent);
-    color: var(--cb-primary);
-}
-
-.task-detail-priority.low {
-    background: color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
-    opacity: 0.8;
-}
-
-.task-item-clickable {
-    cursor: pointer;
-}
-
-.task-item-clickable:hover .task-content {
-    background: color-mix(in srgb, var(--cb-tile-text) 5%, transparent);
-    border-radius: 0.375rem;
 }
 
 /* Hidden utility */

@@ -31,6 +31,7 @@ return [
         'lifetime' => 7200,                  // 2 hours in seconds
         'secure' => true,                    // Set to false if not using HTTPS
         'httponly' => true,
+        // 'samesite' => 'Lax',               // Default Lax so OAuth redirects keep the session (Strict would drop it)
     ],
 
     // Microsoft 365 / Azure AD configuration
@@ -47,6 +48,10 @@ return [
             'Calendars.Read',
             'Tasks.Read',
         ],
+        // Tasks tile: which tasks to show
+        // 'my_day'  = only tasks you added to "My Day" in To Do (requires Graph beta; may not work on all tenants)
+        // 'all'     = all incomplete tasks from your default Tasks list (reliable fallback)
+        'todo_show' => 'all',
     ],
 
     // OnePageCRM configuration
@@ -89,6 +94,14 @@ return [
     'cache' => [
         'enabled' => true,
         'default_ttl' => 300,                // 5 minutes
+    ],
+
+    // Cron refresh (pre-load tile data so dashboard loads faster)
+    // Generate a secret: php -r "echo bin2hex(random_bytes(16));"
+    'cron' => [
+        'secret' => '',                      // Leave empty to disable cron refresh
+        'interval_minutes' => 15,            // Recommended interval (for display in settings)
+        'base_url' => '',                   // e.g. https://your-domain.com (for cron-refresh to call tiles.php)
     ],
 
     // Security settings

@@ -8,7 +8,15 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../includes/functions.php';
+require_once __DIR__ . '/../includes/session.php';
 require_once __DIR__ . '/../includes/auth.php';
+
+// Start session immediately so the CSRF cookie is set on first load (avoids "Invalid security token" on submit)
+Session::init();
+
+// Prevent caching so the form always gets a fresh CSRF token
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
 
 // Redirect if already logged in
 if (Auth::check()) {
@@ -20,7 +28,10 @@ $username = '';
 
 // Handle login form submission
 if (isPost()) {
-    Auth::requireCsrf();
+    if (!Auth::verifyCsrf()) {
+        Session::setFlash('error', 'Your session expired or the security token was invalid. Please try again.');
+        redirect('/login.php');
+    }
 
     $username = trim(post('username', ''));
     $password = post('password', '');

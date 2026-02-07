@@ -55,13 +55,33 @@ function baseUrl(string $path = ''): string
 }
 
 /**
- * Get asset URL with cache busting
+ * Get asset URL with cache busting.
+ * Prefer public/assets when it exists so the version matches the file the server serves (when doc root is public).
  */
 function asset(string $path): string
 {
-    $filePath = dirname(__DIR__) . '/assets/' . ltrim($path, '/');
+    $path = ltrim($path, '/');
+    $base = dirname(__DIR__);
+    $filePath = $base . '/assets/' . $path;
+    $publicPath = $base . '/public/assets/' . $path;
+    if (file_exists($publicPath)) {
+        $filePath = $publicPath;
+    }
     $version = file_exists($filePath) ? filemtime($filePath) : time();
-    return baseUrl('assets/' . ltrim($path, '/')) . '?v=' . $version;
+    return baseUrl('assets/' . $path) . '?v=' . $version;
+}
+
+/**
+ * URL for dashboard.js. Always use public/assets/ so the browser loads the canonical
+ * fixed file (when doc root is project root, /public/assets/... serves public/assets/).
+ */
+function dashboard_script_url(): string
+{
+    $path = 'js/dashboard.js';
+    $base = dirname(__DIR__);
+    $publicPath = $base . '/public/assets/' . $path;
+    $version = file_exists($publicPath) ? filemtime($publicPath) : time();
+    return baseUrl('public/assets/' . $path) . '?v=' . $version;
 }
 
 /**
@@ -290,32 +310,44 @@ function cache(string $key, ?callable $callback = null, int $ttl = 300): mixed
         return $callback ? $callback() : null;
     }
 
-    // Try to get from cache
-    $cached = Database::queryOne(
-        'SELECT cache_data FROM api_cache WHERE cache_key = ? AND expires_at > NOW()',
-        [$key]
-    );
-
-    if ($cached) {
-        return json_decode($cached['cache_data'], true);
+    // Ensure Database class is loaded
+    if (!class_exists('Database')) {
+        require_once __DIR__ . '/../config/database.php';
     }
 
-    // No cache or expired, execute callback
-    if ($callback === null) {
-        return null;
+    try {
+        // Try to get from cache
+        $cached = Database::queryOne(
+            'SELECT cache_data FROM api_cache WHERE cache_key = ? AND expires_at > NOW()',
+            [$key]
+        );
+
+        if ($cached) {
+            return json_decode($cached['cache_data'], true);
+        }
+
+        // No cache or expired, execute callback
+        if ($callback === null) {
+            return null;
+        }
+
+        $data = $callback();
+
+        // Store in cache
+        Database::execute(
+            'INSERT INTO api_cache (cache_key, cache_data, expires_at)
+             VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))
+             ON DUPLICATE KEY UPDATE cache_data = VALUES(cache_data), expires_at = VALUES(expires_at)',
+            [$key, json_encode($data), $ttl]
+        );
+
+        return $data;
+    } catch (Throwable $e) {
+        // If database error, log it and return callback result or null
+        error_log('Cache error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
+        // Return callback result if available, otherwise null
+        return $callback ? $callback() : null;
     }
-
-    $data = $callback();
-
-    // Store in cache
-    Database::execute(
-        'INSERT INTO api_cache (cache_key, cache_data, expires_at)
-         VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))
-         ON DUPLICATE KEY UPDATE cache_data = VALUES(cache_data), expires_at = VALUES(expires_at)',
-        [$key, json_encode($data), $ttl]
-    );
-
-    return $data;
 }
 
 /**
