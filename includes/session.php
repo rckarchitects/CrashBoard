@@ -33,7 +33,7 @@ class Session
             ini_set('session.cookie_httponly', '1');
 
             session_set_cookie_params([
-                'lifetime' => $sessionConfig['lifetime'] ?? 7200,
+                'lifetime' => $sessionConfig['lifetime'] ?? 28800,
                 'path' => '/',
                 'domain' => '',
                 'secure' => $sessionConfig['secure'] ?? true,
@@ -54,6 +54,38 @@ class Session
             }
         }
 
+        self::$initialized = true;
+    }
+
+    /**
+     * Start session with a custom cookie lifetime (e.g. for "private computer" / remember me).
+     * Call after Session::destroy() so the new session gets the long-lived cookie.
+     */
+    public static function startWithLifetime(int $seconds): void
+    {
+        if (session_status() !== PHP_SESSION_NONE) {
+            return;
+        }
+
+        self::$config = self::loadConfig();
+        $sessionConfig = self::$config['session'] ?? [];
+
+        ini_set('session.use_strict_mode', '1');
+        ini_set('session.use_only_cookies', '1');
+        ini_set('session.cookie_httponly', '1');
+
+        session_set_cookie_params([
+            'lifetime' => $seconds,
+            'path' => '/',
+            'domain' => '',
+            'secure' => $sessionConfig['secure'] ?? true,
+            'httponly' => $sessionConfig['httponly'] ?? true,
+            'samesite' => $sessionConfig['samesite'] ?? 'Lax',
+        ]);
+
+        session_name($sessionConfig['name'] ?? 'crashboard_session');
+        session_start();
+        $_SESSION['_created'] = time();
         self::$initialized = true;
     }
 

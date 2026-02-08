@@ -332,21 +332,32 @@
             return;
         }
 
-        const emailsHtml = data.emails.map(email => `
-            <li class="email-item email-item-clickable"
+        const unreadSvg = '<svg class="email-status-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="12" r="4"/></svg>';
+        const flagSvg = '<svg class="email-status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>';
+        const emailsHtml = data.emails.map(email => {
+            let icons = '';
+            if (!email.isRead) icons += `<span class="email-icon email-icon-unread" title="Unread">${unreadSvg}</span>`;
+            if (email.isFlagged) icons += `<span class="email-icon email-icon-flagged" title="Flagged">${flagSvg}</span>`;
+            const statusHtml = icons ? `<span class="email-status-icons">${icons}</span>` : '';
+            return `
+            <li class="email-item email-item-clickable ${email.isRead ? '' : 'unread'}"
                 data-email-subject="${escapeHtml(email.subject)}"
                 data-email-from="${escapeHtml(email.from)}"
                 data-email-preview-full="${escapeHtml(email.previewFull || email.preview || '')}"
                 data-email-received-time="${escapeHtml(email.receivedTime || '')}"
                 data-email-received-datetime="${escapeHtml(email.receivedDateTime || '')}">
-                <div class="flex justify-between items-start">
-                    <span class="email-from">${escapeHtml(email.from)}</span>
-                    <span class="email-time">${escapeHtml(email.receivedTime)}</span>
+                <div class="email-item-first-row">
+                    ${statusHtml}
+                    <div class="email-from-time">
+                        <span class="email-from">${escapeHtml(email.from)}</span>
+                        <span class="email-time">${escapeHtml(email.receivedTime)}</span>
+                    </div>
                 </div>
                 <div class="email-subject">${escapeHtml(email.subject)}</div>
                 <div class="email-preview">${escapeHtml(email.preview)}</div>
             </li>
-        `).join('');
+        `;
+        }).join('');
 
         container.innerHTML = `
             <ul class="email-list">
@@ -867,30 +878,22 @@
         const bookmarks = data.bookmarks || [];
         const tileId = tileElement ? parseInt(tileElement.dataset.tileId) || 0;
 
-        const faviconUrl = (url) => {
-            const domain = getBookmarkDomain(url);
-            if (!domain) return "";
-            return "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(domain) + "&sz=32";
-        };
-
-        let bookmarksHtml;
+        var bookmarksHtml;
         if (bookmarks.length === 0) {
             bookmarksHtml = "<div class=\"bookmarks-empty\"><p class=\"text-gray-500 text-sm\">No bookmarks yet.</p><p class=\"text-gray-400 text-xs mt-1\">Add a URL below to get started.</p></div>";
         } else {
-            const items = bookmarks.filter(function(b) { return b && (b.url || b.id); }).map(function(b) {
-                const url = b.url || "";
-                const domain = getBookmarkDomain(url);
-                const favicon = faviconUrl(url);
-                const label = b.title || domain || url;
-                const imgOrPlaceholder = favicon
-                    ? "<img class=\"bookmark-favicon\" src=\"" + escapeHtml(favicon) + "\" alt=\"\" width=\"32\" height=\"32\">"
-                    : "<span class=\"bookmark-favicon-placeholder\"></span>";
-                return "<div class=\"bookmark-item\" data-bookmark-id=\"" + b.id + "\"><a class=\"bookmark-link\" href=\"" + escapeHtml(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"" + escapeHtml(label) + "\">" + imgOrPlaceholder + "</a><button type=\"button\" class=\"bookmark-delete\" data-bookmark-id=\"" + b.id + "\" title=\"Remove bookmark\" aria-label=\"Remove bookmark\"><svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"/></svg></button></div>";
+            var items = bookmarks.filter(function(b) { return b && (b.url || b.id); }).map(function(b) {
+                var url = b.url || "";
+                var domain = getBookmarkDomain(url);
+                var displayText = (b.title && b.title.trim()) ? b.title.trim() : (domain || url);
+                if (displayText.length > 60) displayText = displayText.substring(0, 57) + "...";
+                var titleAttr = url;
+                return "<div class=\"bookmark-item\" data-bookmark-id=\"" + b.id + "\"><a class=\"bookmark-link\" href=\"" + escapeHtml(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"" + escapeHtml(titleAttr) + "\">" + escapeHtml(displayText) + "</a><button type=\"button\" class=\"bookmark-delete\" data-bookmark-id=\"" + b.id + "\" title=\"Remove bookmark\" aria-label=\"Remove bookmark\"><svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"/></svg></button></div>";
             });
             bookmarksHtml = "<div class=\"bookmarks-grid\">" + items.join("") + "</div>";
         }
 
-        container.innerHTML = "<div class=\"bookmarks-tile\"><form class=\"bookmarks-add-form\" id=\"bookmarks-add-form-" + tileId + "\"><input type=\"url\" class=\"bookmarks-url-input\" placeholder=\"https://...\" required><button type=\"submit\" class=\"bookmarks-add-btn\">Add</button></form><div class=\"bookmarks-list\">" + bookmarksHtml + "</div></div>";
+        container.innerHTML = "<div class=\"bookmarks-tile\"><form class=\"bookmarks-add-form\" id=\"bookmarks-add-form-" + tileId + "\"><input type=\"url\" class=\"bookmarks-url-input\" placeholder=\"https://...\" required><input type=\"text\" class=\"bookmarks-title-input\" placeholder=\"Site name (optional)\" maxlength=\"255\"><button type=\"submit\" class=\"bookmarks-add-btn\">Add</button></form><div class=\"bookmarks-list\">" + bookmarksHtml + "</div></div>";
 
         setupBookmarksAddForm(container, tileElement);
         setupBookmarksDeleteHandlers(container, tileElement);
@@ -905,9 +908,11 @@
 
         form.addEventListener('submit', async function(e) {
             e.preventDefault();
-            const input = form.querySelector('.bookmarks-url-input');
-            const url = (input && input.value) ? input.value.trim() : '';
+            const urlInput = form.querySelector('.bookmarks-url-input');
+            const titleInput = form.querySelector('.bookmarks-title-input');
+            const url = (urlInput && urlInput.value) ? urlInput.value.trim() : '';
             if (!url) return;
+            const title = (titleInput && titleInput.value) ? titleInput.value.trim() : '';
 
             const addBtn = form.querySelector('.bookmarks-add-btn');
             if (addBtn) addBtn.disabled = true;
@@ -920,11 +925,12 @@
                         'X-CSRF-TOKEN': CONFIG.csrfToken,
                         'X-Requested-With': 'XMLHttpRequest'
                     },
-                    body: JSON.stringify({ action: 'add', url })
+                    body: JSON.stringify({ action: 'add', url, title: title || undefined })
                 });
                 const data = await response.json();
                 if (!data.success) throw new Error(data.error || 'Failed to add');
-                if (input) input.value = '';
+                if (urlInput) urlInput.value = '';
+                if (titleInput) titleInput.value = '';
                 if (tileElement) loadTileData(tileElement, false);
             } catch (err) {
                 console.error('Add bookmark error:', err);

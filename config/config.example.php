@@ -28,7 +28,8 @@ return [
     // Session configuration
     'session' => [
         'name' => 'crashboard_session',
-        'lifetime' => 7200,                  // 2 hours in seconds
+        'lifetime' => 28800,                 // Default: 8 hours (in seconds)
+        'lifetime_remember' => 2592000,      // "Private computer": 30 days (in seconds)
         'secure' => true,                    // Set to false if not using HTTPS
         'httponly' => true,
         // 'samesite' => 'Lax',               // Default Lax so OAuth redirects keep the session (Strict would drop it)

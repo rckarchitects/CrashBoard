@@ -324,27 +324,72 @@
             return;
         }
 
-        const emailsHtml = data.emails.map(email => `
-            <li class="email-item ${email.isRead ? '' : 'unread'}">
-                <div class="flex justify-between items-start">
-                    <span class="email-from">${escapeHtml(email.from)}</span>
-                    <span class="email-time">${escapeHtml(email.receivedTime)}</span>
-                </div>
-                <div class="email-subject">${escapeHtml(email.subject)}</div>
-                <div class="email-preview">${escapeHtml(email.preview)}</div>
-            </li>
-        `).join('');
+        const unreadSvg = "<svg class=\"email-status-icon\" viewBox=\"0 0 24 24\" fill=\"currentColor\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"4\"/></svg>";
+        const flagSvg = "<svg class=\"email-status-icon\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z\"/><line x1=\"4\" y1=\"22\" x2=\"4\" y2=\"15\"/></svg>";
+        const emailsHtml = data.emails.map(function(email) {
+            var icons = "";
+            if (!email.isRead) icons += "<span class=\"email-icon email-icon-unread\" title=\"Unread\">" + unreadSvg + "</span>";
+            if (email.isFlagged) icons += "<span class=\"email-icon email-icon-flagged\" title=\"Flagged\">" + flagSvg + "</span>";
+            var statusHtml = icons ? "<span class=\"email-status-icons\">" + icons + "</span>" : "";
+            var previewFull = (email.previewFull != null && email.previewFull !== "") ? email.previewFull : (email.preview || "");
+            var receivedDt = email.receivedDateTime || "";
+            return "<li class=\"email-item email-item-clickable " + (email.isRead ? "" : "unread") + "\" data-email-subject=\"" + escapeHtml(email.subject) + "\" data-email-from=\"" + escapeHtml(email.from) + "\" data-email-preview-full=\"" + escapeHtml(previewFull) + "\" data-email-received-time=\"" + escapeHtml(email.receivedTime || "") + "\" data-email-received-datetime=\"" + escapeHtml(receivedDt) + "\"><div class=\"email-item-first-row\">" + statusHtml + "<div class=\"email-from-time\"><span class=\"email-from\">" + escapeHtml(email.from) + "</span><span class=\"email-time\">" + escapeHtml(email.receivedTime) + "</span></div></div><div class=\"email-subject\">" + escapeHtml(email.subject) + "</div><div class=\"email-preview\">" + escapeHtml(email.preview) + "</div></li>";
+        }).join("");
 
-        container.innerHTML = `
-            <ul class="email-list">
-                ${emailsHtml}
-            </ul>
-            ${data.unreadCount > data.emails.length ? `
-                <p class="text-xs text-gray-500 mt-3 text-center">
-                    +${data.unreadCount - data.emails.length} more unread
-                </p>
-            ` : ''}
-        `;
+        var moreHtml = data.unreadCount > data.emails.length ? "<p class=\"text-xs text-gray-500 mt-3 text-center\">+" + (data.unreadCount - data.emails.length) + " more unread</p>" : "";
+        container.innerHTML = "<ul class=\"email-list\">" + emailsHtml + "</ul>" + moreHtml;
+
+        container.querySelectorAll(".email-item-clickable").forEach(function(item) {
+            item.addEventListener("click", function() {
+                var email = {
+                    subject: this.dataset.emailSubject || "(No Subject)",
+                    from: this.dataset.emailFrom || "",
+                    previewFull: this.dataset.emailPreviewFull || "",
+                    receivedTime: this.dataset.emailReceivedTime || "",
+                    receivedDateTime: this.dataset.emailReceivedDatetime || ""
+                };
+                openEmailDetailOverlay(email);
+            });
+        });
+    }
+
+    function formatEmailDateTime(isoString) {
+        if (!isoString) return "";
+        try {
+            var d = new Date(isoString);
+            if (isNaN(d.getTime())) return "";
+            return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+        } catch (e) {
+            return "";
+        }
+    }
+
+    function openEmailDetailOverlay(email) {
+        var overlay = document.getElementById("email-detail-overlay");
+        if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.className = "email-detail-overlay";
+            overlay.id = "email-detail-overlay";
+            overlay.innerHTML = "<div class=\"email-detail-modal\"><div class=\"email-detail-modal-header\"><h3 class=\"email-detail-modal-title\" id=\"email-detail-subject\"></h3><button type=\"button\" class=\"email-detail-modal-close\" id=\"email-detail-close-btn\" title=\"Close\"><svg fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"/></svg></button></div><div class=\"email-detail-modal-body\"><div class=\"email-detail-meta\" id=\"email-detail-meta\"></div><div class=\"email-detail-preview\" id=\"email-detail-preview\"></div></div></div>";
+            document.body.appendChild(overlay);
+            document.getElementById("email-detail-close-btn").addEventListener("click", closeEmailDetailOverlay);
+            overlay.addEventListener("click", function(e) {
+                if (e.target === overlay) closeEmailDetailOverlay();
+            });
+            document.addEventListener("keydown", function emailDetailEscape(e) {
+                if (e.key === "Escape" && document.getElementById("email-detail-overlay") && document.getElementById("email-detail-overlay").classList.contains("show")) closeEmailDetailOverlay();
+            });
+        }
+        document.getElementById("email-detail-subject").textContent = email.subject;
+        var dateTimeDisplay = formatEmailDateTime(email.receivedDateTime) || email.receivedTime || "";
+        document.getElementById("email-detail-meta").innerHTML = "<div class=\"email-detail-meta-row\"><strong>From:</strong> " + escapeHtml(email.from) + "</div>" + (dateTimeDisplay ? "<div class=\"email-detail-meta-row\"><strong>Date:</strong> " + escapeHtml(dateTimeDisplay) + "</div>" : "");
+        document.getElementById("email-detail-preview").textContent = email.previewFull || "No preview.";
+        requestAnimationFrame(function() { overlay.classList.add("show"); });
+    }
+
+    function closeEmailDetailOverlay() {
+        var overlay = document.getElementById("email-detail-overlay");
+        if (overlay) overlay.classList.remove("show");
     }
 
     /**
@@ -402,19 +447,24 @@
         }
 
         if (!data.tasks || data.tasks.length === 0) {
+            const emptySource = data.tasks_source_label ? ` <span class="task-list-source">(${escapeHtml(data.tasks_source_label)})</span>` : '';
             container.innerHTML = `
                 <div class="empty-state">
                     <svg class="empty-state-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
                     </svg>
-                    <p class="empty-state-text">No tasks</p>
+                    <p class="empty-state-text">No tasks${emptySource}</p>
                 </div>
             `;
             return;
         }
 
         const tasksHtml = data.tasks.map(task => `
-            <li class="task-item ${task.completed ? 'completed' : ''}">
+            <li class="task-item task-item-clickable ${task.completed ? 'completed' : ''}"
+                data-task-id="${escapeHtml(task.id)}"
+                data-task-title="${escapeHtml(task.title)}"
+                data-task-importance="${escapeHtml(task.importance || 'normal')}"
+                data-task-due-date="${escapeHtml(task.dueDate || '')}">
                 <div class="task-checkbox ${task.completed ? 'completed' : ''}" data-task-id="${task.id}"></div>
                 <div class="task-content">
                     <div class="task-title">
@@ -426,7 +476,87 @@
             </li>
         `).join('');
 
-        container.innerHTML = `<ul class="task-list">${tasksHtml}</ul>`;
+        const sourceLabel = data.tasks_source_label ? `<p class="task-list-source">Showing: ${escapeHtml(data.tasks_source_label)}</p>` : '';
+        container.innerHTML = `<ul class="task-list">${tasksHtml}</ul>${sourceLabel}`;
+
+        container.querySelectorAll('.task-item-clickable').forEach(item => {
+            item.addEventListener('click', function(e) {
+                if (e.target.closest('.task-checkbox')) return;
+                const task = {
+                    id: this.dataset.taskId,
+                    title: this.dataset.taskTitle || '(No Title)',
+                    importance: this.dataset.taskImportance || 'normal',
+                    dueDate: this.dataset.taskDueDate || null
+                };
+                openTaskDetailOverlay(task);
+            });
+        });
+    }
+
+    /**
+     * Open task detail overlay (same blurred-background style as notes popup)
+     */
+    function openTaskDetailOverlay(task) {
+        let overlay = document.getElementById('task-detail-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = 'task-detail-overlay';
+            overlay.id = 'task-detail-overlay';
+            overlay.innerHTML = `
+                <div class="task-detail-modal">
+                    <div class="task-detail-modal-header">
+                        <h3 class="task-detail-modal-title">Task details</h3>
+                        <button type="button" class="task-detail-modal-close" id="task-detail-close-btn" title="Close">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="task-detail-modal-body">
+                        <p class="task-detail-task-title" id="task-detail-task-title"></p>
+                        <div class="task-detail-meta" id="task-detail-meta"></div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            document.getElementById('task-detail-close-btn').addEventListener('click', closeTaskDetailOverlay);
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay) closeTaskDetailOverlay();
+            });
+            document.addEventListener('keydown', function taskDetailEscape(e) {
+                if (e.key === 'Escape' && document.getElementById('task-detail-overlay')?.classList.contains('show')) {
+                    closeTaskDetailOverlay();
+                }
+            });
+        }
+
+        document.getElementById('task-detail-task-title').textContent = task.title;
+        const metaEl = document.getElementById('task-detail-meta');
+        const importanceLabel = { high: 'High', normal: 'Normal', low: 'Low' }[task.importance] || task.importance;
+        metaEl.innerHTML = `
+            <div class="task-detail-meta-row">
+                <span class="task-detail-meta-label">Priority</span>
+                <span class="task-detail-priority ${task.importance}">${escapeHtml(importanceLabel)}</span>
+            </div>
+            ${task.dueDate ? `
+            <div class="task-detail-meta-row">
+                <span class="task-detail-meta-label">Due</span>
+                <span>${escapeHtml(task.dueDate)}</span>
+            </div>
+            ` : ''}
+        `;
+
+        requestAnimationFrame(() => overlay.classList.add('show'));
+    }
+
+    /**
+     * Close task detail overlay
+     */
+    function closeTaskDetailOverlay() {
+        const overlay = document.getElementById('task-detail-overlay');
+        if (!overlay) return;
+        overlay.classList.remove('show');
     }
 
     /**
@@ -599,12 +729,14 @@
                 minute: "2-digit",
                 hour12: true
             });
-            return "<div class=\"notes-list-item\" data-note-id=\"" + note.id + "\"><div class=\"notes-list-preview\">" + escapeHtml(note.preview) + "</div><div class=\"notes-list-date\">" + escapeHtml(dateStr) + " at " + escapeHtml(timeStr) + "</div></div>";
+            var deleteSvg = "<svg class=\"w-4 h-4\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16\"/></svg>";
+            return "<div class=\"notes-list-item\" data-note-id=\"" + note.id + "\"><div class=\"notes-list-item-content\"><div class=\"notes-list-preview\">" + escapeHtml(note.preview) + "</div><div class=\"notes-list-date\">" + escapeHtml(dateStr) + " at " + escapeHtml(timeStr) + "</div></div><button type=\"button\" class=\"notes-list-delete\" data-note-id=\"" + note.id + "\" title=\"Delete note\" aria-label=\"Delete note\">" + deleteSvg + "</button></div>";
         }).join("");
 
         container.innerHTML = "<div class=\"notes-list-container\"><div class=\"notes-list\">" + notesHtml + "</div></div>";
 
         setupNotesListClickHandlers();
+        setupNotesListDeleteHandlers(container);
     }
 
     /**
@@ -625,12 +757,6 @@
         var bookmarks = data.bookmarks || [], tileId = tileElement ? parseInt(tileElement.dataset.tileId, 10) : 0;
         if (tileId !== tileId) tileId = 0;
 
-        var faviconUrl = function(url) {
-            var domain = getBookmarkDomain(url);
-            if (!domain) return "";
-            return "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(domain) + "&sz=32";
-        };
-
         var bookmarksHtml;
         if (bookmarks.length === 0) {
             bookmarksHtml = "<div class=\"bookmarks-empty\"><p class=\"text-gray-500 text-sm\">No bookmarks yet.</p><p class=\"text-gray-400 text-xs mt-1\">Add a URL below to get started.</p></div>";
@@ -638,17 +764,15 @@
             var items = bookmarks.filter(function(b) { return b && (b.url || b.id); }).map(function(b) {
                 var url = b.url || "";
                 var domain = getBookmarkDomain(url);
-                var favicon = faviconUrl(url);
-                var label = b.title || domain || url;
-                var imgOrPlaceholder = favicon
-                    ? "<img class=\"bookmark-favicon\" src=\"" + escapeHtml(favicon) + "\" alt=\"\" width=\"32\" height=\"32\">"
-                    : "<span class=\"bookmark-favicon-placeholder\"></span>";
-                return "<div class=\"bookmark-item\" data-bookmark-id=\"" + b.id + "\"><a class=\"bookmark-link\" href=\"" + escapeHtml(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"" + escapeHtml(label) + "\">" + imgOrPlaceholder + "</a><button type=\"button\" class=\"bookmark-delete\" data-bookmark-id=\"" + b.id + "\" title=\"Remove bookmark\" aria-label=\"Remove bookmark\"><svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"/></svg></button></div>";
+                var displayText = (b.title && b.title.trim()) ? b.title.trim() : (domain || url);
+                if (displayText.length > 60) displayText = displayText.substring(0, 57) + "...";
+                var titleAttr = url;
+                return "<div class=\"bookmark-item\" data-bookmark-id=\"" + b.id + "\"><a class=\"bookmark-link\" href=\"" + escapeHtml(url) + "\" target=\"_blank\" rel=\"noopener noreferrer\" title=\"" + escapeHtml(titleAttr) + "\">" + escapeHtml(displayText) + "</a><button type=\"button\" class=\"bookmark-delete\" data-bookmark-id=\"" + b.id + "\" title=\"Remove bookmark\" aria-label=\"Remove bookmark\"><svg class=\"w-3.5 h-3.5\" fill=\"none\" stroke=\"currentColor\" viewBox=\"0 0 24 24\"><path stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M6 18L18 6M6 6l12 12\"/></svg></button></div>";
             });
             bookmarksHtml = "<div class=\"bookmarks-grid\">" + items.join("") + "</div>";
         }
 
-        container.innerHTML = "<div class=\"bookmarks-tile\"><form class=\"bookmarks-add-form\" id=\"bookmarks-add-form-" + tileId + "\"><input type=\"url\" class=\"bookmarks-url-input\" placeholder=\"https://...\" required><button type=\"submit\" class=\"bookmarks-add-btn\">Add</button></form><div class=\"bookmarks-list\">" + bookmarksHtml + "</div></div>";
+        container.innerHTML = "<div class=\"bookmarks-tile\"><form class=\"bookmarks-add-form\" id=\"bookmarks-add-form-" + tileId + "\"><input type=\"url\" class=\"bookmarks-url-input\" placeholder=\"https://...\" required><input type=\"text\" class=\"bookmarks-title-input\" placeholder=\"Site name (optional)\" maxlength=\"255\"><button type=\"submit\" class=\"bookmarks-add-btn\">Add</button></form><div class=\"bookmarks-list\">" + bookmarksHtml + "</div></div>";
 
         setupBookmarksAddForm(container, tileElement);
         setupBookmarksDeleteHandlers(container, tileElement);
@@ -663,9 +787,11 @@
 
         form.addEventListener("submit", async function(e) {
             e.preventDefault();
-            const input = form.querySelector(".bookmarks-url-input");
-            const url = (input && input.value) ? input.value.trim() : "";
+            const urlInput = form.querySelector(".bookmarks-url-input");
+            const titleInput = form.querySelector(".bookmarks-title-input");
+            const url = (urlInput && urlInput.value) ? urlInput.value.trim() : "";
             if (!url) return;
+            const title = (titleInput && titleInput.value) ? titleInput.value.trim() : "";
 
             const addBtn = form.querySelector(".bookmarks-add-btn");
             if (addBtn) addBtn.disabled = true;
@@ -678,11 +804,12 @@
                         "X-CSRF-TOKEN": CONFIG.csrfToken,
                         "X-Requested-With": "XMLHttpRequest"
                     },
-                    body: JSON.stringify({ action: "add", url: url })
+                    body: JSON.stringify({ action: "add", url: url, title: title || undefined })
                 });
                 const data = await response.json();
                 if (!data.success) throw new Error(data.error || "Failed to add");
-                if (input) input.value = "";
+                if (urlInput) urlInput.value = "";
+                if (titleInput) titleInput.value = "";
                 if (tileElement) loadTileData(tileElement, false);
             } catch (err) {
                 console.error("Add bookmark error:", err);
@@ -826,11 +953,12 @@
      * Setup click handlers for notes list items
      */
     function setupNotesListClickHandlers() {
-        const items = document.querySelectorAll('.notes-list-item');
-        
-        items.forEach(item => {
-            item.addEventListener('click', async function() {
-                const noteId = parseInt(this.dataset.noteId);
+        var items = document.querySelectorAll(".notes-list-item");
+
+        items.forEach(function(item) {
+            item.addEventListener("click", async function(e) {
+                if (e.target.closest(".notes-list-delete")) return;
+                var noteId = parseInt(this.dataset.noteId, 10);
                 if (!noteId) return;
 
                 // Find the notes editing tile
@@ -871,6 +999,45 @@
                 } catch (error) {
                     console.error('Error loading note:', error);
                     alert('Failed to load note. Please try again.');
+                }
+            });
+        });
+    }
+
+    /**
+     * Setup delete button handlers for notes list items
+     */
+    function setupNotesListDeleteHandlers(container) {
+        if (!container) return;
+        var deleteButtons = container.querySelectorAll(".notes-list-delete");
+        var notesListTile = container.closest(".tile");
+
+        deleteButtons.forEach(function(btn) {
+            btn.addEventListener("click", async function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var noteId = parseInt(this.dataset.noteId, 10);
+                if (!noteId) return;
+                if (!confirm("Delete this note? This cannot be undone.")) return;
+
+                try {
+                    var response = await fetch(CONFIG.notesEndpoint, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRF-TOKEN": CONFIG.csrfToken,
+                            "X-Requested-With": "XMLHttpRequest"
+                        },
+                        body: JSON.stringify({ action: "delete_note", note_id: noteId })
+                    });
+                    var data = await response.json();
+                    if (!data.success) throw new Error(data.error || "Failed to delete note");
+                    if (notesListTile) loadTileData(notesListTile, false);
+                    var notesTile = document.querySelector(".tile[data-tile-type=\"notes\"]");
+                    if (notesTile) loadTileData(notesTile, false);
+                } catch (err) {
+                    console.error("Error deleting note:", err);
+                    alert("Failed to delete note. Please try again.");
                 }
             });
         });

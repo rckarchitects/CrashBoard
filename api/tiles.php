@@ -166,9 +166,11 @@ function getEmailData(int $userId): array
                     $content = $email['body']['content'];
                     $contentType = $email['body']['contentType'] ?? 'text';
                     $rawPreview = $contentType === 'html'
-                        ? trim(preg_replace('/\s+/', ' ', strip_tags($content)))
+                        ? htmlToPlainTextWithLineBreaks($content)
                         : $content;
-                    $rawPreview = html_entity_decode($rawPreview, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+                    $rawPreview = $contentType === 'text'
+                        ? html_entity_decode($rawPreview, ENT_QUOTES | ENT_HTML5, 'UTF-8')
+                        : $rawPreview;
                 }
                 if ($rawPreview === '') {
                     $rawPreview = $email['bodyPreview'] ?? '';

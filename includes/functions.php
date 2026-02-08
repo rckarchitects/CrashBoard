@@ -265,6 +265,25 @@ function truncate(string $text, int $length = 100, string $suffix = '...'): stri
 }
 
 /**
+ * Convert HTML to plain text preserving only line breaks (no other formatting).
+ * Used for email body preview so popups are legible.
+ */
+function htmlToPlainTextWithLineBreaks(string $html): string
+{
+    $text = $html;
+    // Turn line-break and block elements into newlines before stripping tags
+    $text = preg_replace('/<br\s*\/?>\s*/i', "\n", $text);
+    $text = preg_replace('/<\/?(p|div|tr|li|h[1-6])\b[^>]*>\s*/i', "\n", $text);
+    $text = strip_tags($text);
+    $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    // Collapse multiple spaces/tabs within a line to single space
+    $text = preg_replace('/[ \t]+/', ' ', $text);
+    // Collapse 2+ newlines to single newline so line spacing is even
+    $text = preg_replace('/\n{2,}/', "\n", $text);
+    return trim($text);
+}
+
+/**
  * Strip HTML and truncate
  */
 function excerpt(string $html, int $length = 150): string

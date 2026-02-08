@@ -42,6 +42,19 @@ if (isPost()) {
         $result = Auth::attempt($username, $password);
 
         if ($result['success']) {
+            $isPrivateComputer = !empty(post('private_computer'));
+
+            if ($isPrivateComputer) {
+                $userId = (int) $_SESSION['user_id'];
+                $userData = $_SESSION['user_data'] ?? [];
+                $redirectTo = Session::flash('redirect_to', '/index.php');
+                Session::destroy();
+                $rememberLifetime = (int) config('session.lifetime_remember', 2592000);
+                Session::startWithLifetime($rememberLifetime);
+                Session::setUser($userId, $userData);
+                redirect($redirectTo);
+            }
+
             // Redirect to original destination or dashboard
             $redirectTo = Session::flash('redirect_to', '/index.php');
             redirect($redirectTo);
@@ -159,6 +172,19 @@ $pageTitle = 'Login - CrashBoard';
                                 placeholder="Enter your password"
                             >
                         </div>
+                    </div>
+
+                    <div class="flex items-center">
+                        <input
+                            id="private_computer"
+                            name="private_computer"
+                            type="checkbox"
+                            value="1"
+                            class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                        >
+                        <label for="private_computer" class="ml-2 block text-sm text-gray-700">
+                            This is a private computer — keep me signed in longer
+                        </label>
                     </div>
 
                     <div>

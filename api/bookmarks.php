@@ -29,6 +29,31 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     jsonError('Method not allowed', 405);
 }
 
+/**
+ * Fetch a URL and extract the <title> from the first chunk of HTML (best-effort).
+ */
+function fetchPageTitle(string $url): ?string
+{
+    $ctx = stream_context_create([
+        'http' => [
+            'timeout' => 4,
+            'follow_location' => 1,
+            'user_agent' => 'Mozilla/5.0 (compatible; CrashBoard/1.0)',
+        ],
+        'ssl' => ['verify_peer' => true],
+    ]);
+    $html = @file_get_contents($url, false, $ctx);
+    if ($html === false || strlen($html) < 10) {
+        return null;
+    }
+    $html = substr($html, 0, 65536);
+    if (preg_match('/<title[^>]*>\s*(.*?)\s*<\/title>/is', $html, $m)) {
+        $title = trim(html_entity_decode(strip_tags($m[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        return $title !== '' ? mb_substr($title, 0, 255) : null;
+    }
+    return null;
+}
+
 $input = json_decode(file_get_contents('php://input'), true);
 $action = $input['action'] ?? '';
 $userId = Auth::id();
@@ -72,7 +97,10 @@ switch ($action) {
         }
 
         $url = mb_substr($url, 0, 2048);
-        $title = $title !== '' ? mb_substr($title, 0, 255) : null;
+        if ($title === '') {
+            $title = fetchPageTitle($url);
+        }
+        $title = $title !== null && $title !== '' ? mb_substr($title, 0, 255) : null;
 
         try {
             Database::execute(
