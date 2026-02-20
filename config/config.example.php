@@ -25,11 +25,15 @@ return [
         'charset' => 'utf8mb4',
     ],
 
-    // Session configuration
+    // Session configuration (durations in seconds)
     'session' => [
         'name' => 'crashboard_session',
-        'lifetime' => 28800,                 // Default: 8 hours (in seconds)
-        'lifetime_remember' => 2592000,      // "Private computer": 30 days (in seconds)
+        // Normal login: how long the session lasts before you must sign in again
+        // Examples: 3600 = 1 hour, 28800 = 8 hours, 86400 = 1 day, 604800 = 7 days
+        'lifetime' => 604800,                // 7 days
+        // "Private computer" checkbox: longer-lived session
+        // Examples: 2592000 = 30 days, 7776000 = 90 days
+        'lifetime_remember' => 2592000,      // 30 days
         'secure' => true,                    // Set to false if not using HTTPS
         'httponly' => true,
         // 'samesite' => 'Lax',               // Default Lax so OAuth redirects keep the session (Strict would drop it)
@@ -48,10 +52,11 @@ return [
             'Mail.Read',
             'Calendars.Read',
             'Tasks.Read',
+            'Tasks.ReadWrite',  // required to mark tasks complete from the tile
         ],
         // Tasks tile: which tasks to show
-        // 'my_day'  = only tasks you added to "My Day" in To Do (requires Graph beta; may not work on all tenants)
-        // 'all'     = all incomplete tasks from your default Tasks list (reliable fallback)
+        // 'my_day'  = Planner "My Day" tasks (GET /me/planner/myDayTasks). Work/school accounts only; falls back to To Do if unavailable.
+        // 'all'     = all incomplete tasks from your default To Do list (reliable)
         'todo_show' => 'all',
     ],
 
@@ -81,12 +86,28 @@ return [
         'units' => 'celsius',                // 'celsius' or 'fahrenheit'
     ],
 
+    // Train departures configuration
+    // Uses Huxley 2 API (JSON proxy for National Rail Enquiries)
+    // Get access token from: https://realtime.nationalrail.co.uk/OpenLDBWSRegistration/Registration
+    // The demo server (huxley2.azurewebsites.net) may be unreliable - consider hosting your own instance
+    'train' => [
+        'api_token' => '',                    // Optional: NRE access token for more reliable service
+    ],
+
+    // Planner overview tile: limits (used when not set per-user in Settings)
+    'planner_overview' => [
+        'max_plans' => 10,                  // Max plan columns to show
+        'max_tasks_per_plan' => 15,          // Max tasks per plan column
+    ],
+
     // Tile refresh settings (in seconds)
     'refresh' => [
         'default_interval' => 300,           // 5 minutes
         'email' => 300,
         'calendar' => 600,                   // 10 minutes
         'todo' => 300,
+        'planner_overview' => 300,           // Backend cache TTL for planner overview
+        'planner-overview' => 300,           // Planner overview tile (tasks by plan)
         'crm' => 600,
         'weather' => 1800,                   // 30 minutes
     ],

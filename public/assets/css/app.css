@@ -50,14 +50,35 @@ body {
 }
 
 /* ============================================
+   Dashboard Tabs (Main / Screen 2)
+   ============================================ */
+
+.dashboard-tab {
+    color: var(--cb-header-text);
+}
+.dashboard-tab:hover {
+    opacity: 1;
+}
+.dashboard-tab-active,
+.dashboard-tab[aria-selected="true"] {
+    opacity: 1;
+    background-color: color-mix(in srgb, var(--cb-header-text) 8%, transparent);
+    border-bottom: 2px solid var(--cb-primary);
+    margin-bottom: -2px;
+}
+.dashboard-panel.hidden {
+    display: none !important;
+}
+
+/* ============================================
    Resizable Grid System
    ============================================ */
 
 .tiles-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1.5rem;
-    grid-auto-rows: minmax(200px, auto);
+    grid-template-columns: repeat(5, 1fr);
+    gap: 1.25rem;
+    grid-auto-rows: 185px;
 }
 
 @media (max-width: 768px) {
@@ -80,7 +101,14 @@ body {
     position: absolute;
     background: transparent;
     z-index: 10;
+    pointer-events: none;
+    visibility: hidden;
     transition: background 0.2s ease;
+}
+
+.reorder-mode .tile-resize-handle {
+    pointer-events: auto;
+    visibility: visible;
 }
 
 .tile-resize-handle:hover {
@@ -112,7 +140,7 @@ body {
 .tile-resize-handle-e {
     top: 0;
     right: 0;
-    width: 6px;
+    width: 12px;
     height: 100%;
     cursor: ew-resize;
     opacity: 0;
@@ -126,7 +154,7 @@ body {
     bottom: 0;
     left: 0;
     width: 100%;
-    height: 6px;
+    height: 12px;
     cursor: ns-resize;
     opacity: 0;
 }
@@ -158,18 +186,35 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    min-height: 2.5rem;
+    height: 2.5rem;
+    padding: 0 0.5rem;
     background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    flex-shrink: 0;
 }
 
 .tile-title {
     display: flex;
     align-items: center;
-    font-size: 0.875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     color: var(--cb-tile-text);
     margin: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.tile-title svg {
+    flex-shrink: 0;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.5rem;
+}
+
+.tile-title .tile-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tile-refresh {
@@ -202,10 +247,31 @@ body {
 
 .tile-content {
     flex: 1;
-    padding: 1rem;
-    overflow-y: auto;
-    max-height: 400px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 0.6rem;
+    overflow: hidden;
+    font-size: 0.8125rem;
     color: var(--cb-tile-text);
+}
+
+.tile-content-inner {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.75rem;
+}
+
+.tile-content-inner:has(.notes-container) {
+    overflow: hidden;
+}
+
+.tile-content-inner:has(.planner-overview-wrap) {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 /* Tile Loading State */
@@ -240,8 +306,8 @@ body {
 }
 
 .tile-placeholder p {
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.8125rem;
 }
 
 .tile-connect-btn {
@@ -273,8 +339,8 @@ body {
 }
 
 .tile-error p {
-    margin-bottom: 1rem;
-    font-size: 0.875rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.8125rem;
 }
 
 .tile-retry-btn {
@@ -303,24 +369,28 @@ body {
     list-style: none;
     padding: 0;
     margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
 .email-item {
     display: flex;
     flex-direction: column;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #f3f4f6;
+    padding: 0.75rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.5rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .email-item:last-child {
-    border-bottom: none;
+    margin-bottom: 0;
 }
 
 .email-item.unread {
-    background: #f0f9ff;
-    margin: 0 -1rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
+    background: color-mix(in srgb, var(--cb-primary) 8%, transparent);
+    border-color: color-mix(in srgb, var(--cb-primary) 20%, transparent);
 }
 
 .email-item-first-row {
@@ -369,14 +439,14 @@ body {
 }
 
 .email-from {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 600;
     color: #111827;
     margin-bottom: 0.25rem;
 }
 
 .email-subject {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     color: #374151;
     margin-bottom: 0.25rem;
     white-space: nowrap;
@@ -397,16 +467,87 @@ body {
     color: #9ca3af;
 }
 
+/* Flagged email reminder tile */
+.flagged-email-tile {
+    padding: 0;
+}
+.flagged-email-card {
+    padding: 0.5rem 0;
+}
+.flagged-email-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--cb-tile-text);
+    opacity: 0.9;
+}
+.flagged-email-from {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.flagged-email-time {
+    flex-shrink: 0;
+    font-size: 0.75rem;
+    opacity: 0.8;
+}
+.flagged-email-subject {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    margin: 0.35rem 0 0.25rem 0;
+    line-height: 1.3;
+    color: var(--cb-tile-text);
+}
+.flagged-email-preview {
+    font-size: 0.8125rem;
+    color: var(--cb-tile-text);
+    opacity: 0.85;
+    margin: 0.25rem 0 0 0;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.flagged-email-count {
+    margin: 0;
+}
+
+/* Flagged email count tile */
+.flagged-email-count-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 1rem;
+}
+
+.flagged-email-count-number {
+    font-size: 4rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--cb-tile-text);
+    margin-bottom: 0.5rem;
+}
+
+.flagged-email-count-label {
+    font-size: 0.875rem;
+    color: var(--cb-tile-text);
+    opacity: 0.75;
+    text-align: center;
+}
+
 .email-item-clickable {
     cursor: pointer;
 }
 
 .email-item-clickable:hover {
-    background: color-mix(in srgb, var(--cb-primary) 8%, transparent);
-    margin: 0 -1rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
-    border-radius: 0.375rem;
+    background: color-mix(in srgb, var(--cb-primary) 5%, var(--cb-tile-bg));
+    border-color: color-mix(in srgb, var(--cb-primary) 30%, transparent);
 }
 
 /* Email detail overlay */
@@ -539,17 +680,484 @@ body {
     list-style: none;
     padding: 0;
     margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+/* Make calendar list scrollable */
+.tile-content:has(.calendar-list) {
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 
 .calendar-item {
     display: flex;
     align-items: flex-start;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #f3f4f6;
+    padding: 0.75rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.5rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
-.calendar-item:last-child {
+/* Calendar item status styles */
+.calendar-item-future {
+    /* Future events: normal styling (white/primary text color) */
+}
+
+.calendar-item-current {
+    /* Current/ongoing events: highlight color */
+    background: color-mix(in srgb, var(--cb-primary) 12%, transparent);
+    border-color: color-mix(in srgb, var(--cb-primary) 30%, transparent);
+}
+
+.calendar-item-current .calendar-title {
+    color: var(--cb-primary);
+    font-weight: 600;
+}
+
+.calendar-item-current .calendar-indicator {
+    background: var(--cb-primary);
+    width: 0.375rem;
+}
+
+.calendar-item-past {
+    /* Past events: transparency and crossed out */
+    opacity: 0.5;
+}
+
+.calendar-item-past .calendar-title {
+    text-decoration: line-through;
+    color: color-mix(in srgb, var(--cb-tile-text) 60%, transparent);
+}
+
+.calendar-item-past .calendar-time,
+.calendar-item-past .calendar-location {
+    color: color-mix(in srgb, var(--cb-tile-text) 50%, transparent);
+}
+
+.calendar-item-past .calendar-indicator {
+    background: color-mix(in srgb, var(--cb-tile-text) 30%, transparent);
+}
+
+/* End of day message */
+.calendar-item-end-message {
+    justify-content: center;
+    text-align: center;
+    padding: 1rem 0.75rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.5rem;
+    opacity: 0.7;
+}
+
+.calendar-item-end-message .calendar-end-message-text {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--cb-tile-text) 70%, transparent);
+    width: 100%;
+    text-align: center;
+}
+
+/* Calendar heat map tile: 5×5 grid, weekdays only, shading by event count */
+.calendar-heatmap-outer {
+    position: relative;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: center;
+    min-height: 0;
+    overflow: hidden;
+    padding-top: 0.25rem;
+}
+
+/* Reduce padding for calendar heatmap tiles */
+.tile-content:has(.calendar-heatmap-outer) {
+    padding: 0.4rem 0.6rem;
+}
+
+.calendar-heatmap-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 20px);
+    grid-auto-rows: 20px;
+    gap: 0.25rem;
+    padding: 0.15rem 0;
+    width: fit-content;
+    margin: 0 auto;
+    flex-shrink: 0;
+}
+
+.calendar-heatmap-cell {
+    width: 20px;
+    height: 20px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: #374151;
+}
+
+.calendar-heatmap-cell.calendar-heatmap-today {
+    border-color: currentColor;
+}
+
+/* Hover popover: preview of events for that day */
+.calendar-heatmap-popover {
+    position: fixed;
+    z-index: 1000;
+    min-width: 180px;
+    max-width: 280px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 0.5rem 0.6rem;
+    background: var(--cb-tile-bg);
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 20%, transparent);
+    border-radius: 0.5rem;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+    font-size: 0.8125rem;
+    color: var(--cb-tile-text);
+    pointer-events: auto;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease, visibility 0.15s ease;
+}
+
+.calendar-heatmap-popover.calendar-heatmap-popover-visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.calendar-heatmap-popover-title {
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+}
+
+.calendar-heatmap-popover-empty {
+    margin: 0;
+    font-size: 0.75rem;
+    color: var(--cb-tile-text);
+    opacity: 0.8;
+}
+
+.calendar-heatmap-popover-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.calendar-heatmap-popover-item {
+    padding: 0.2rem 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 8%, transparent);
+    line-height: 1.3;
+}
+
+.calendar-heatmap-popover-item:last-child {
     border-bottom: none;
+}
+
+.calendar-heatmap-popover-time {
+    display: inline-block;
+    min-width: 3.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--cb-primary);
+    margin-right: 0.35rem;
+}
+
+.calendar-heatmap-day {
+    display: block;
+    line-height: 1;
+}
+
+/* Intensity levels: theme primary with increasing opacity (transparency); text always dark for readability */
+.calendar-heatmap-n0 {
+    background-color: color-mix(in srgb, var(--cb-primary) 6%, transparent);
+    color: var(--cb-tile-text);
+}
+
+.calendar-heatmap-n1 {
+    background-color: color-mix(in srgb, var(--cb-primary) 20%, transparent);
+    color: #111827;
+}
+
+.calendar-heatmap-n2 {
+    background-color: color-mix(in srgb, var(--cb-primary) 40%, transparent);
+    color: #111827;
+}
+
+.calendar-heatmap-n3 {
+    background-color: color-mix(in srgb, var(--cb-primary) 60%, transparent);
+    color: #111827;
+}
+
+.calendar-heatmap-n4 {
+    background-color: color-mix(in srgb, var(--cb-primary) 80%, transparent);
+    color: #111827;
+}
+
+.calendar-heatmap-n5 {
+    background-color: var(--cb-primary);
+    color: #ffffff;
+}
+
+/* ============================================
+   Availability Tile Styles
+   ============================================ */
+
+.availability-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.availability-copy-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--cb-primary);
+    color: #ffffff;
+    border: none;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+}
+
+.availability-copy-btn:hover {
+    background: color-mix(in srgb, var(--cb-primary) 90%, black);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgb(0 0 0 / 0.1);
+}
+
+.availability-copy-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.1);
+}
+
+.availability-copy-btn.copied {
+    background: #10b981;
+}
+
+.availability-copy-btn svg {
+    flex-shrink: 0;
+}
+
+.availability-tiles-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.375rem;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+}
+
+.availability-tile-square {
+    aspect-ratio: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0.375rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.375rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    text-align: center;
+    min-width: 0;
+}
+
+.availability-tile-square:hover {
+    background: color-mix(in srgb, var(--cb-primary) 5%, var(--cb-tile-bg));
+    border-color: color-mix(in srgb, var(--cb-primary) 30%, transparent);
+}
+
+.availability-tile-day {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--cb-primary);
+    line-height: 1;
+    margin-bottom: 0.125rem;
+}
+
+.availability-tile-month {
+    font-size: 0.5rem;
+    font-weight: 500;
+    color: #6b7280;
+    margin-bottom: 0.125rem;
+    line-height: 1;
+}
+
+.availability-tile-time {
+    font-size: 0.5rem;
+    color: #374151;
+    line-height: 1.2;
+    text-align: center;
+}
+
+/* ============================================
+   Train Departures Tile Styles (compact)
+   ============================================ */
+
+.train-route-row {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-bottom: 0.5rem;
+}
+
+.train-route-row .train-route-header {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+.train-flip-btn {
+    flex-shrink: 0;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 25%, transparent);
+    border-radius: 0.25rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    color: var(--cb-tile-text);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.train-flip-btn:hover {
+    background: color-mix(in srgb, var(--cb-primary) 12%, var(--cb-tile-bg));
+    border-color: color-mix(in srgb, var(--cb-primary) 35%, transparent);
+}
+
+.train-route-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.5rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
+    border-radius: 0.25rem;
+}
+
+.train-route-header .train-station-code {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    color: var(--cb-primary);
+    letter-spacing: 0.03em;
+}
+
+.train-arrow {
+    width: 0.875rem;
+    height: 0.875rem;
+    color: var(--cb-tile-text);
+    opacity: 0.5;
+    flex-shrink: 0;
+}
+
+.train-countdown {
+    font-size: 0.625rem;
+    font-weight: 600;
+    color: var(--cb-primary);
+    background: color-mix(in srgb, var(--cb-primary) 12%, transparent);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.2rem;
+    margin-left: 0.375rem;
+    flex-shrink: 0;
+}
+
+.train-departures-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0 0.25rem;
+}
+
+.train-departure-item {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+    padding: 0.25rem 0.375rem;
+    font-size: 0.6875rem;
+    line-height: 1.3;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 8%, transparent);
+    border-radius: 0.25rem;
+    min-height: 0;
+}
+
+.train-departure-item:hover {
+    background: color-mix(in srgb, var(--cb-primary) 4%, var(--cb-tile-bg));
+    border-color: color-mix(in srgb, var(--cb-primary) 18%, transparent);
+}
+
+.train-departure-item .train-time {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: var(--cb-tile-text);
+    min-width: 2.25rem;
+}
+
+.train-departure-item .train-status {
+    flex-shrink: 0;
+    font-size: 0.625rem;
+    font-weight: 500;
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.2rem;
+}
+
+.train-departure-item .train-platform {
+    flex-shrink: 0;
+    font-size: 0.625rem;
+    color: var(--cb-tile-text);
+    opacity: 0.75;
+}
+
+.train-departure-item .train-destination {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.625rem;
+    color: var(--cb-tile-text);
+    opacity: 0.85;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.train-status-ontime {
+    background: color-mix(in srgb, #10b981 18%, transparent);
+    color: #059669;
+}
+
+.train-status-delayed {
+    background: color-mix(in srgb, #f59e0b 18%, transparent);
+    color: #d97706;
+}
+
+.train-status-cancelled {
+    background: color-mix(in srgb, #dc2626 18%, transparent);
+    color: #dc2626;
 }
 
 .calendar-time {
@@ -566,7 +1174,7 @@ body {
 }
 
 .calendar-title {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     font-weight: 500;
     color: #111827;
     margin-bottom: 0.125rem;
@@ -588,6 +1196,143 @@ body {
     margin-right: 0.75rem;
 }
 
+/* Next event by category (single event, prominent) */
+.calendar-next-card {
+    padding: 0.5rem 0;
+    color: var(--cb-tile-text);
+}
+
+.calendar-next-countdown {
+    display: inline-block;
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: var(--cb-primary);
+    margin-bottom: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    background: color-mix(in srgb, var(--cb-primary) 15%, transparent);
+    border-radius: 0.375rem;
+}
+
+.calendar-next-date {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--cb-tile-text);
+    margin-bottom: 0.35rem;
+    opacity: 0.9;
+}
+
+.calendar-next-subject {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--cb-tile-text);
+    margin: 0 0 0.35rem 0;
+}
+
+.calendar-next-location {
+    font-size: 0.875rem;
+    color: var(--cb-tile-text);
+    opacity: 0.85;
+}
+
+.calendar-next-empty {
+    text-align: center;
+    padding: 1.5rem 0.5rem;
+    color: var(--cb-tile-text);
+    opacity: 0.9;
+}
+
+.calendar-next-empty-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem 0;
+}
+
+.calendar-next-empty-sub {
+    font-size: 0.875rem;
+    margin: 0;
+    opacity: 0.85;
+}
+
+/* Second event (demoted) */
+.calendar-next-second {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid color-mix(in srgb, var(--cb-tile-text) 20%, transparent);
+    font-size: 0.8125rem;
+    color: var(--cb-tile-text);
+    opacity: 0.8;
+}
+
+.calendar-next-second-date {
+    font-size: 0.75rem;
+    opacity: 0.9;
+    margin-bottom: 0.15rem;
+}
+
+.calendar-next-second-subject {
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+/* Next event tile (prominent with live countdown) */
+.next-event-card {
+    padding: 0.5rem 0;
+    color: var(--cb-tile-text);
+}
+
+.next-event-countdown {
+    display: block;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--cb-primary);
+    margin-bottom: 0.5rem;
+    padding: 0.35rem 0.6rem;
+    background: color-mix(in srgb, var(--cb-primary) 15%, transparent);
+    border-radius: 0.5rem;
+    text-align: center;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+}
+
+.next-event-countdown.in-progress {
+    color: #dc2626; /* red-600 */
+    background: color-mix(in srgb, #dc2626 15%, transparent);
+}
+
+.next-event-datetime {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--cb-tile-text);
+    opacity: 0.95;
+    margin-bottom: 0.35rem;
+}
+
+.next-event-subject {
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--cb-tile-text);
+    margin: 0 0 0.35rem 0;
+}
+
+.next-event-date {
+    margin-right: 0.25rem;
+}
+
+.next-event-time {
+    font-weight: 600;
+    color: var(--cb-primary);
+}
+
+.next-event-card .calendar-next-location {
+    margin-top: 0.35rem;
+}
+
 /* ============================================
    Task/Todo Tile Styles
    ============================================ */
@@ -596,17 +1341,19 @@ body {
     list-style: none;
     padding: 0;
     margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
 .task-item {
     display: flex;
     align-items: flex-start;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #f3f4f6;
-}
-
-.task-item:last-child {
-    border-bottom: none;
+    padding: 0.75rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.5rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .task-checkbox {
@@ -636,7 +1383,7 @@ body {
 }
 
 .task-title {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     color: #374151;
 }
 
@@ -671,6 +1418,238 @@ body {
     background: #10b981;
 }
 
+/* Planner overview tile: columns by plan */
+.planner-overview-wrap {
+    position: relative;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.planner-overview-top-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-shrink: 0;
+    margin-bottom: 0.75rem;
+}
+
+.planner-overview-top-row .planner-overview-total {
+    margin-bottom: 0;
+}
+
+.planner-overview-top-row .planner-overview-jumper {
+    position: relative;
+    bottom: auto;
+    right: auto;
+    z-index: 5;
+    flex-shrink: 0;
+}
+
+.planner-overview-top-row .planner-overview-jumper-popover {
+    bottom: auto;
+    top: 100%;
+    margin-bottom: 0;
+    margin-top: 0.25rem;
+}
+
+.planner-overview-total {
+    flex-shrink: 0;
+    margin-bottom: 0.75rem;
+}
+
+.planner-overview-total-number {
+    font-size: 4rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--cb-tile-text);
+}
+
+.planner-overview-total-sub {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--cb-tile-text) 70%, transparent);
+    margin: 0.25rem 0 0 0;
+}
+
+.planner-overview-total-label {
+    font-size: 0.875rem;
+    color: var(--cb-tile-text);
+    opacity: 0.75;
+}
+
+.planner-overview-columns {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 220px;
+    grid-template-rows: 1fr;
+    gap: 1rem;
+    overflow-x: auto;
+    flex: 1;
+    min-height: 0;
+    scroll-behavior: smooth;
+}
+
+.planner-overview-column {
+    width: 220px;
+    min-width: 220px;
+    max-width: 220px;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    align-content: start;
+    overflow: hidden;
+}
+
+.planner-overview-column-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.25;
+    color: var(--cb-tile-text);
+    margin: 0 0 0.5rem 0;
+    padding-bottom: 0.375rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    /* Fixed height for 3 lines so task lists align across columns */
+    height: calc(3em * 1.25 + 0.375rem);
+    min-height: calc(3em * 1.25 + 0.375rem);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    line-clamp: 3;
+    word-break: break-word;
+}
+
+.planner-overview-column-count {
+    font-weight: 500;
+    color: color-mix(in srgb, var(--cb-tile-text) 70%, transparent);
+    white-space: nowrap;
+}
+
+.planner-overview-column .task-list {
+    min-height: 0;
+    min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+.planner-overview-column .task-item {
+    min-width: 0;
+}
+
+.planner-overview-column .task-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Plans button (top-right of content, in line with large counter) */
+.planner-overview-jumper {
+    position: absolute;
+    bottom: 1.25rem;
+    right: 0.5rem;
+    z-index: 5;
+}
+
+.planner-overview-jumper-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--cb-tile-text);
+    background: var(--cb-tile-bg);
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 20%, transparent);
+    border-radius: 0.375rem;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.planner-overview-jumper-btn:hover {
+    background: color-mix(in srgb, var(--cb-tile-text) 6%, var(--cb-tile-bg));
+    border-color: color-mix(in srgb, var(--cb-tile-text) 30%, transparent);
+}
+
+.planner-overview-jumper-btn[aria-expanded="true"] {
+    border-color: var(--cb-primary);
+}
+
+.planner-overview-jumper-popover {
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    margin-bottom: 0.25rem;
+    width: max-content;
+    min-width: 12rem;
+    max-width: min(38rem, 95vw);
+    max-height: min(85vh, 55rem);
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.25rem 0;
+    background: var(--cb-tile-bg);
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 18%, transparent);
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
+    display: none;
+    z-index: 10;
+}
+
+.planner-overview-jumper-popover.is-open {
+    display: block;
+}
+
+.planner-overview-jumper-section {
+    padding: 0.25rem 0;
+}
+.planner-overview-jumper-section:not(:first-child) {
+    border-top: 1px solid color-mix(in srgb, var(--cb-tile-text) 12%, transparent);
+}
+.planner-overview-jumper-section-title {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: color-mix(in srgb, var(--cb-tile-text) 60%, transparent);
+    padding: 0.25rem 0.75rem 0.2rem;
+}
+
+.planner-overview-jumper-popover button.planner-overview-jumper-option {
+    display: block;
+    width: 100%;
+    min-width: 100%;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8125rem;
+    text-align: left;
+    white-space: nowrap;
+    color: var(--cb-tile-text);
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+
+.planner-overview-jumper-popover button.planner-overview-jumper-option:hover {
+    background: color-mix(in srgb, var(--cb-tile-text) 8%, transparent);
+}
+
+.planner-overview-jumper-option-hidden {
+    border: 1px solid var(--cb-primary);
+    border-radius: 0.25rem;
+    margin: 0.15rem 0.5rem;
+    width: calc(100% - 1rem);
+    min-width: 0;
+}
+
+.planner-overview-jumper-empty {
+    font-size: 0.8125rem;
+    color: color-mix(in srgb, var(--cb-tile-text) 60%, transparent);
+    padding: 0.5rem 0.75rem;
+    margin: 0;
+}
+
 /* ============================================
    CRM Tile Styles
    ============================================ */
@@ -679,17 +1658,19 @@ body {
     list-style: none;
     padding: 0;
     margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
 }
 
 .crm-item {
     display: flex;
     flex-direction: column;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #f3f4f6;
-}
-
-.crm-item:last-child {
-    border-bottom: none;
+    padding: 0.75rem;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.5rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .crm-contact {
@@ -713,6 +1694,11 @@ body {
 .crm-due.overdue {
     color: #dc2626;
     font-weight: 500;
+}
+
+.crm-item:hover {
+    background: color-mix(in srgb, var(--cb-primary) 5%, var(--cb-tile-bg));
+    border-color: color-mix(in srgb, var(--cb-primary) 30%, transparent);
 }
 
 /* ============================================
@@ -757,7 +1743,7 @@ body {
 }
 
 .weather-temp {
-    font-size: 2.5rem;
+    font-size: 1.75rem;
     font-weight: 700;
     color: var(--cb-tile-text);
     line-height: 1;
@@ -879,10 +1865,13 @@ body {
     height: 300px;
 }
 
+/* Frame styling for AI Assistant tile (matches other tiles) is in .tile-content:has(.claude-interface) .claude-interface */
+
 .claude-messages {
     flex: 1;
     overflow-y: auto;
     padding-bottom: 0.5rem;
+    padding-right: 0.75rem;
 }
 
 .claude-welcome {
@@ -922,13 +1911,15 @@ body {
     display: flex;
     gap: 0.5rem;
     padding-top: 0.75rem;
-    border-top: 1px solid #e5e7eb;
+    border-top: 1px solid color-mix(in srgb, var(--cb-tile-text) 12%, transparent);
 }
 
 .claude-input {
     flex: 1;
     padding: 0.625rem 0.875rem;
-    border: 1px solid #d1d5db;
+    background: var(--cb-tile-bg);
+    color: var(--cb-tile-text);
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 25%, transparent);
     border-radius: 0.5rem;
     font-size: 0.875rem;
     outline: none;
@@ -938,6 +1929,10 @@ body {
 .claude-input:focus {
     border-color: var(--cb-primary);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--cb-primary) 20%, transparent);
+}
+
+.claude-input::placeholder {
+    color: color-mix(in srgb, var(--cb-tile-text) 50%, transparent);
 }
 
 .claude-submit {
@@ -1018,25 +2013,50 @@ body {
    Scrollbar Styles
    ============================================ */
 
+.tile-content-inner::-webkit-scrollbar,
 .tile-content::-webkit-scrollbar,
-.claude-messages::-webkit-scrollbar {
+.claude-messages::-webkit-scrollbar,
+.notes-textarea::-webkit-scrollbar,
+.notes-list-container::-webkit-scrollbar,
+.availability-tiles-grid::-webkit-scrollbar,
+.planner-overview-columns::-webkit-scrollbar,
+.planner-overview-column .task-list::-webkit-scrollbar {
     width: 0.375rem;
+    height: 0;
 }
 
+.tile-content-inner::-webkit-scrollbar-track,
 .tile-content::-webkit-scrollbar-track,
-.claude-messages::-webkit-scrollbar-track {
+.claude-messages::-webkit-scrollbar-track,
+.notes-textarea::-webkit-scrollbar-track,
+.notes-list-container::-webkit-scrollbar-track,
+.availability-tiles-grid::-webkit-scrollbar-track,
+.planner-overview-columns::-webkit-scrollbar-track,
+.planner-overview-column .task-list::-webkit-scrollbar-track {
     background: #f3f4f6;
     border-radius: 0.25rem;
 }
 
+.tile-content-inner::-webkit-scrollbar-thumb,
 .tile-content::-webkit-scrollbar-thumb,
-.claude-messages::-webkit-scrollbar-thumb {
+.claude-messages::-webkit-scrollbar-thumb,
+.notes-textarea::-webkit-scrollbar-thumb,
+.notes-list-container::-webkit-scrollbar-thumb,
+.availability-tiles-grid::-webkit-scrollbar-thumb,
+.planner-overview-columns::-webkit-scrollbar-thumb,
+.planner-overview-column .task-list::-webkit-scrollbar-thumb {
     background: #d1d5db;
     border-radius: 0.25rem;
 }
 
+.tile-content-inner::-webkit-scrollbar-thumb:hover,
 .tile-content::-webkit-scrollbar-thumb:hover,
-.claude-messages::-webkit-scrollbar-thumb:hover {
+.claude-messages::-webkit-scrollbar-thumb:hover,
+.notes-textarea::-webkit-scrollbar-thumb:hover,
+.notes-list-container::-webkit-scrollbar-thumb:hover,
+.availability-tiles-grid::-webkit-scrollbar-thumb:hover,
+.planner-overview-columns::-webkit-scrollbar-thumb:hover,
+.planner-overview-column .task-list::-webkit-scrollbar-thumb:hover {
     background: #9ca3af;
 }
 
@@ -1118,8 +2138,9 @@ body {
 }
 
 .reorder-mode .tile.drag-over {
-    border: 2px dashed #0ea5e9;
-    background: #f0f9ff;
+    border: 2px dashed var(--cb-primary);
+    background: color-mix(in srgb, var(--cb-primary) 12%, transparent);
+    transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .drag-handle {
@@ -1142,6 +2163,38 @@ body {
 .reorder-tile .tile-content {
     pointer-events: none;
     opacity: 0.7;
+}
+
+.tile-move-screen {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.5rem;
+    margin-left: auto;
+    margin-right: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--cb-tile-text);
+    background: color-mix(in srgb, var(--cb-tile-text) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 25%, transparent);
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.tile-move-screen:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--cb-primary) 20%, transparent);
+    color: var(--cb-primary);
+}
+.tile-move-screen:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+.tile-move-screen-label {
+    white-space: nowrap;
+}
+.reorder-mode .tile-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
 }
 
 /* Toast notifications */
@@ -1348,18 +2401,17 @@ body {
     padding: 0.5rem 0.875rem;
     font-size: 0.75rem;
     font-weight: 500;
-    color: #6b7280;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
+    color: var(--cb-tile-text);
+    background: color-mix(in srgb, var(--cb-tile-text) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 20%, transparent);
     border-radius: 0.375rem;
     cursor: pointer;
     transition: all 0.15s ease;
 }
 
 .suggestions-refresh:hover {
-    background: #f3f4f6;
-    color: #374151;
-    border-color: #d1d5db;
+    background: color-mix(in srgb, var(--cb-tile-text) 14%, transparent);
+    border-color: color-mix(in srgb, var(--cb-tile-text) 30%, transparent);
 }
 
 .suggestions-refresh svg {
@@ -1372,18 +2424,74 @@ body {
     padding-top: 0.5rem;
 }
 
+/* Single scroll: tile-content does not scroll when it contains Claude; only .claude-messages scrolls */
+.tile-content:has(.claude-interface) {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.tile-content-inner:has(.claude-interface) {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.tile-content:has(.claude-interface) .claude-interface {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.6rem;
+}
+
 .claude-interface {
     display: flex;
     flex-direction: column;
     height: auto;
-    min-height: 300px;
-    max-height: 450px;
+    min-height: 200px;
+    flex: 1;
 }
 
 .claude-messages {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding-bottom: 0.5rem;
+    padding-right: 0.75rem;
+}
+
+/* Single scroll: tile-content does not scroll when it contains notes; only .notes-textarea scrolls */
+.tile-content:has(.notes-container) {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.tile-content-inner:has(.notes-container) {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.tile-content:has(.notes-container) .notes-container {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: color-mix(in srgb, var(--cb-tile-bg) 98%, var(--cb-background));
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.6rem;
 }
 
 /* ============================================
@@ -1393,23 +2501,28 @@ body {
 .notes-container {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: auto;
+    min-height: 200px;
+    flex: 1;
 }
 
 .notes-textarea {
     flex: 1;
     width: 100%;
-    min-height: 200px;
+    min-height: 0;
     padding: 0.75rem;
     border: none;
     border-radius: 0.5rem;
     font-size: 0.875rem;
     font-family: inherit;
     line-height: 1.6;
-    resize: vertical;
+    resize: none;
     outline: none;
     background: transparent;
     color: inherit;
+    overflow-y: auto;
+    padding-bottom: 0.5rem;
+    padding-right: 0.75rem;
 }
 
 .notes-textarea:focus {
@@ -1423,8 +2536,9 @@ body {
 .notes-status {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
+    min-height: 1.25rem;
     padding-top: 0.5rem;
-    border-top: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
     margin-top: 0.5rem;
 }
 
@@ -1451,7 +2565,6 @@ body {
     justify-content: space-between;
     align-items: center;
     padding-top: 0.5rem;
-    border-top: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
     margin-top: 0.5rem;
 }
 
@@ -1461,25 +2574,42 @@ body {
     align-items: center;
 }
 
-.notes-save-btn {
+/* Small icon-only buttons in notes tile footer */
+.notes-footer-icon-btn {
     display: inline-flex;
     align-items: center;
-    padding: 0.5rem 1rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: white;
-    background: var(--cb-primary);
+    justify-content: center;
+    width: 1.75rem;
+    height: 1.75rem;
+    padding: 0;
     border: none;
-    border-radius: 0.5rem;
+    border-radius: 0.375rem;
+    background: transparent;
+    color: color-mix(in srgb, var(--cb-tile-text) 70%, transparent);
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition: color 0.15s ease, background 0.15s ease;
 }
 
-.notes-save-btn:hover:not(:disabled) {
+.notes-footer-icon-btn:hover:not(:disabled) {
+    color: var(--cb-tile-text);
+    background: color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
+}
+
+.notes-footer-icon-btn svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.notes-footer-icon-btn.notes-save-btn {
+    color: white;
+    background: var(--cb-primary);
+}
+
+.notes-footer-icon-btn.notes-save-btn:hover:not(:disabled) {
     background: color-mix(in srgb, var(--cb-primary) 90%, black);
 }
 
-.notes-save-btn:disabled {
+.notes-footer-icon-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
 }
@@ -1698,6 +2828,358 @@ body {
 }
 
 /* ============================================
+   Link Board Tile (kanban)
+   ============================================ */
+
+.link-board-tile {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.link-board-toolbar {
+    flex-shrink: 0;
+    margin-bottom: 0.75rem;
+}
+
+.link-board-add-cat-btn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: white;
+    background: var(--cb-primary);
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+}
+
+.link-board-add-cat-btn:hover {
+    filter: brightness(1.1);
+}
+
+.link-board-columns {
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex: 1;
+    min-height: 0;
+    padding-bottom: 0.25rem;
+}
+
+.link-board-columns::-webkit-scrollbar {
+    height: 6px;
+}
+
+.link-board-columns::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--cb-tile-text) 25%, transparent);
+    border-radius: 3px;
+}
+
+.link-board-empty-state {
+    padding: 1.5rem 1rem;
+    text-align: center;
+    color: color-mix(in srgb, var(--cb-tile-text) 70%, transparent);
+}
+
+.link-board-column {
+    flex: 0 0 200px;
+    min-width: 200px;
+    max-width: 220px;
+    display: flex;
+    flex-direction: column;
+    background: color-mix(in srgb, var(--cb-tile-text) 6%, transparent);
+    border-radius: 0.5rem;
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 12%, transparent);
+    max-height: 100%;
+    overflow: hidden;
+}
+
+.link-board-column-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.6rem;
+    flex-shrink: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
+}
+
+.link-board-column-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--cb-tile-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.link-board-column-actions {
+    display: flex;
+    gap: 0.2rem;
+}
+
+.link-board-column-actions button {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--cb-tile-text);
+    cursor: pointer;
+    font-size: 0.875rem;
+    line-height: 1;
+    opacity: 0.7;
+}
+
+.link-board-column-actions button:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+}
+
+.link-board-column-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-height: 60px;
+}
+
+.link-board-column-body.link-board-drop-target {
+    background: color-mix(in srgb, var(--cb-primary) 12%, transparent);
+    border-radius: 0.375rem;
+    outline: 2px dashed var(--cb-primary);
+    outline-offset: -2px;
+}
+
+.link-board-add-item-btn {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+    color: var(--cb-tile-text);
+    background: transparent;
+    border: 1px dashed color-mix(in srgb, var(--cb-tile-text) 30%, transparent);
+    border-radius: 0.375rem;
+    cursor: pointer;
+    text-align: left;
+    opacity: 0.85;
+}
+
+.link-board-add-item-btn:hover {
+    opacity: 1;
+    border-color: var(--cb-primary);
+    color: var(--cb-primary);
+}
+
+.link-board-card {
+    background: var(--cb-tile-bg);
+    border: 1px solid color-mix(in srgb, var(--cb-tile-text) 15%, transparent);
+    border-radius: 0.375rem;
+    padding: 0.5rem 0.6rem;
+    cursor: grab;
+    transition: box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.link-board-card:active {
+    cursor: grabbing;
+}
+
+.link-board-card.link-board-dragging {
+    opacity: 0.85;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.link-board-card-link {
+    display: block;
+    text-decoration: none;
+    color: var(--cb-tile-text);
+    margin-bottom: 0.25rem;
+}
+
+.link-board-card-link:hover {
+    color: var(--cb-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.link-board-card-title {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.link-board-card-summary-wrapper {
+    margin-top: 0.25rem;
+}
+
+.link-board-card-summary {
+    font-size: 0.75rem;
+    color: color-mix(in srgb, var(--cb-tile-text) 75%, transparent);
+    display: block;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    cursor: pointer;
+    transition: color 0.15s ease, text-decoration 0.15s ease;
+}
+
+.link-board-card-summary:hover {
+    color: var(--cb-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.link-board-card-actions {
+    display: flex;
+    gap: 0.2rem;
+    margin-top: 0.35rem;
+    flex-wrap: wrap;
+}
+
+.link-board-card-actions button {
+    padding: 0.2rem 0.4rem;
+    font-size: 0.7rem;
+    border: none;
+    border-radius: 0.25rem;
+    background: color-mix(in srgb, var(--cb-tile-text) 18%, transparent);
+    color: var(--cb-tile-text);
+    cursor: pointer;
+    opacity: 0.9;
+}
+
+.link-board-card-actions button:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--cb-tile-text) 28%, transparent);
+}
+
+.link-board-card-summarize {
+    font-weight: 600;
+}
+
+.link-board-card-actions button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+/* Link Board Summary Modal Overlay */
+.link-board-summary-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.link-board-summary-overlay.show {
+    opacity: 1;
+}
+
+.link-board-summary-modal {
+    background: var(--cb-tile-bg);
+    color: var(--cb-tile-text);
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 10px 10px -5px rgb(0 0 0 / 0.04);
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.95);
+    transition: transform 0.2s ease;
+    overflow: hidden;
+}
+
+.link-board-summary-overlay.show .link-board-summary-modal {
+    transform: scale(1);
+}
+
+.link-board-summary-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
+}
+
+.link-board-summary-modal-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--cb-tile-text);
+    margin: 0;
+}
+
+.link-board-summary-modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0.375rem;
+    color: var(--cb-tile-text);
+    cursor: pointer;
+    font-size: 1.5rem;
+    line-height: 1;
+    opacity: 0.7;
+    transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.link-board-summary-modal-close:hover {
+    background: color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
+    opacity: 1;
+}
+
+.link-board-summary-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+}
+
+.link-board-summary-modal-text {
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--cb-tile-text);
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+@media (max-width: 768px) {
+    .link-board-summary-modal {
+        width: 100%;
+        max-width: 100%;
+        max-height: 100vh;
+        border-radius: 0;
+    }
+
+    .link-board-summary-modal-header,
+    .link-board-summary-modal-body {
+        padding: 1rem;
+    }
+}
+
+/* ============================================
    Notes Popup Overlay Styles
    ============================================ */
 
@@ -1872,31 +3354,6 @@ body {
     cursor: not-allowed;
 }
 
-.notes-open-popup-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.5rem 0.75rem;
-    background: transparent;
-    border: 1px solid color-mix(in srgb, var(--cb-primary) 30%, transparent);
-    border-radius: 0.375rem;
-    color: var(--cb-primary);
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.notes-open-popup-btn:hover {
-    background: color-mix(in srgb, var(--cb-primary) 10%, transparent);
-    border-color: var(--cb-primary);
-}
-
-.notes-open-popup-btn svg {
-    width: 1rem;
-    height: 1rem;
-}
-
 @media (max-width: 768px) {
     .notes-modal {
         width: 100%;
@@ -2063,16 +3520,264 @@ body {
     opacity: 0.8;
 }
 
+.task-detail-actions {
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid color-mix(in srgb, var(--cb-tile-text) 12%, transparent);
+}
+
+.task-detail-mark-complete {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--cb-tile-bg);
+    background: var(--cb-primary);
+    border: none;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+.task-detail-mark-complete:hover:not(:disabled) {
+    filter: brightness(1.08);
+}
+
+.task-detail-mark-complete:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
 .task-item-clickable {
     cursor: pointer;
 }
 
-.task-item-clickable:hover .task-content {
-    background: color-mix(in srgb, var(--cb-tile-text) 5%, transparent);
+.task-item-clickable:hover {
+    background: color-mix(in srgb, var(--cb-primary) 5%, var(--cb-tile-bg));
+    border-color: color-mix(in srgb, var(--cb-primary) 30%, transparent);
+}
+
+/* CRM action detail overlay */
+.crm-item-clickable {
+    cursor: pointer;
+}
+
+.crm-detail-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.crm-detail-overlay.show {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.crm-detail-modal {
+    background: var(--cb-tile-bg);
+    color: var(--cb-tile-text);
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 10px 10px -5px rgb(0 0 0 / 0.04);
+    width: 90%;
+    max-width: 480px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    transform: scale(0.95);
+    transition: transform 0.2s ease;
+    overflow: hidden;
+}
+
+.crm-detail-overlay.show .crm-detail-modal {
+    transform: scale(1);
+}
+
+.crm-detail-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
+}
+
+.crm-detail-modal-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--cb-tile-text);
+    margin: 0;
+}
+
+.crm-detail-modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem;
+    background: transparent;
+    border: none;
     border-radius: 0.375rem;
+    color: var(--cb-tile-text);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    opacity: 0.7;
+}
+
+.crm-detail-modal-close:hover {
+    background: color-mix(in srgb, var(--cb-tile-text) 10%, transparent);
+    opacity: 1;
+}
+
+.crm-detail-modal-close svg {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+.crm-detail-modal-body {
+    padding: 1.5rem;
+    overflow: auto;
+}
+
+.crm-detail-action-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--cb-tile-text);
+    margin: 0 0 1rem 0;
+    line-height: 1.4;
+}
+
+.crm-detail-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--cb-tile-text);
+    opacity: 0.9;
+}
+
+.crm-detail-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.crm-detail-meta-label {
+    font-weight: 500;
+    min-width: 5rem;
+}
+
+.crm-detail-overdue {
+    color: #dc2626;
+    font-weight: 500;
+}
+
+.crm-detail-hint {
+    font-size: 0.8125rem;
+    color: var(--cb-tile-text);
+    opacity: 0.7;
+    margin: 1rem 0 0 0;
 }
 
 /* Hidden utility */
 .hidden {
     display: none !important;
+}
+
+/* ============================================
+   Wide screen: push content below fixed header
+   ============================================ */
+
+/* When viewport is wider than breakpoint, header is always visible; reserve top space so first row of tiles is not obscured (override Tailwind py-8) */
+@media (min-width: 1921px) {
+    #dashboardMain {
+        padding-top: 5rem !important;
+    }
+}
+
+/* ============================================
+   Mobile/Small Screen Header Rollover Effect
+   ============================================ */
+
+@media (max-width: 1920px) {
+    /* Position header off-screen by default, completely hidden */
+    #mainHeader {
+        transform: translateY(-100%) !important;
+    }
+    
+    /* When header should be revealed */
+    #mainHeader.header-revealed {
+        transform: translateY(0) !important;
+    }
+    
+    /* Hover zone at top of dashboard */
+    #headerHoverZone {
+        pointer-events: auto;
+        background: transparent;
+        cursor: pointer;
+    }
+    
+    /* Add padding to main content to account for hidden header */
+    main {
+        padding-top: 2rem;
+    }
+    
+    /* Ensure header stays on top when revealed */
+    #mainHeader {
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    }
+    
+    /* Visual indicator at top when header is hidden - subtle hint */
+    #headerHoverZone::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(to bottom, color-mix(in srgb, var(--cb-header-text) 20%, transparent), transparent);
+        pointer-events: none;
+        opacity: 0.6;
+    }
+    
+    /* Show hint on hover */
+    #headerHoverZone:hover::before {
+        opacity: 1;
+        height: 4px;
+    }
+}
+
+/* ============================================
+   Mobile: always show header with hamburger (no hover-to-reveal)
+   ============================================ */
+
+@media (max-width: 768px) {
+    /* Keep header visible so hamburger is always available for Settings, Logout, etc. */
+    #mainHeader {
+        transform: none !important;
+    }
+
+    /* Main content padding so first row of tiles is not under the header */
+    #dashboardMain {
+        padding-top: 4rem !important;
+    }
+
+    /* Hover zone not needed on mobile; don't block taps */
+    #headerHoverZone {
+        pointer-events: none;
+    }
+
+    #headerHoverZone::before {
+        display: none;
+    }
 }

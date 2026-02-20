@@ -50,8 +50,8 @@ try {
         $rowSpan = (int)($tile['row_span'] ?? 1);
 
         // Validate spans (1-4 columns, 1-4 rows)
-        $columnSpan = max(1, min(4, $columnSpan));
-        $rowSpan = max(1, min(4, $rowSpan));
+        $columnSpan = max(1, min(5, $columnSpan));
+        $rowSpan = max(1, min(5, $rowSpan));
 
         if ($tileId <= 0) {
             continue;

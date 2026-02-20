@@ -18,6 +18,14 @@ Session::init();
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 
+// Allow redirect param so client can send expired-session users back to the page they were on
+if (isset($_GET['redirect']) && is_string($_GET['redirect'])) {
+    $r = trim($_GET['redirect']);
+    if ($r !== '' && $r[0] === '/') {
+        Session::setFlash('redirect_to', $r);
+    }
+}
+
 // Redirect if already logged in
 if (Auth::check()) {
     redirect('/index.php');
@@ -52,8 +60,12 @@ if (isPost()) {
                 $rememberLifetime = (int) config('session.lifetime_remember', 2592000);
                 Session::startWithLifetime($rememberLifetime);
                 Session::setUser($userId, $userData);
+                Session::set('private_computer', true);
                 redirect($redirectTo);
             }
+
+            // Normal session: record expiry so header can show time left
+            Session::set('session_expires_at', time() + (int) config('session.lifetime', 604800));
 
             // Redirect to original destination or dashboard
             $redirectTo = Session::flash('redirect_to', '/index.php');

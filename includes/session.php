@@ -22,18 +22,21 @@ class Session
         }
 
         self::$config = self::loadConfig();
+        $sessionConfig = self::$config['session'] ?? [];
+        $lifetime = (int) ($sessionConfig['lifetime'] ?? 604800);
+        $lifetimeRemember = (int) ($sessionConfig['lifetime_remember'] ?? 2592000);
 
-        // Prevent session fixation
+        // Start session if not already started
         if (session_status() === PHP_SESSION_NONE) {
             // Set secure session parameters
-            $sessionConfig = self::$config['session'] ?? [];
-
             ini_set('session.use_strict_mode', '1');
             ini_set('session.use_only_cookies', '1');
             ini_set('session.cookie_httponly', '1');
+            // Use the longer of the two so "private computer" session files are not GC'd early
+            ini_set('session.gc_maxlifetime', (string) max($lifetime, $lifetimeRemember));
 
             session_set_cookie_params([
-                'lifetime' => $sessionConfig['lifetime'] ?? 28800,
+                'lifetime' => $lifetime,
                 'path' => '/',
                 'domain' => '',
                 'secure' => $sessionConfig['secure'] ?? true,
@@ -44,14 +47,34 @@ class Session
             session_name($sessionConfig['name'] ?? 'crashboard_session');
             session_start();
 
-            // Regenerate session ID periodically to prevent fixation
+            // Initialize session metadata
             if (!isset($_SESSION['_created'])) {
                 $_SESSION['_created'] = time();
-            } elseif (time() - $_SESSION['_created'] > 1800) {
-                // Regenerate every 30 minutes
-                session_regenerate_id(true);
-                $_SESSION['_created'] = time();
             }
+        }
+
+        // After session is started (whether new or existing), handle "private computer" refresh on EVERY request
+        if (!empty($_SESSION['private_computer'])) {
+            // Refresh cookie with long lifetime so it never expires
+            $params = session_get_cookie_params();
+            setcookie(session_name(), session_id(), [
+                'expires' => time() + $lifetimeRemember,
+                'path' => $params['path'],
+                'domain' => $params['domain'],
+                'secure' => $params['secure'],
+                'httponly' => $params['httponly'],
+                'samesite' => $params['samesite'] ?? 'Lax',
+            ]);
+            
+            // Touch session file by updating a timestamp to prevent GC from deleting it
+            $_SESSION['_last_activity'] = time();
+        }
+
+        // Regenerate session ID periodically to prevent fixation (skip for private computer to avoid unnecessary churn)
+        if (empty($_SESSION['private_computer']) && isset($_SESSION['_created']) && (time() - $_SESSION['_created']) > 1800) {
+            // Regenerate every 30 minutes for normal sessions only
+            session_regenerate_id(true);
+            $_SESSION['_created'] = time();
         }
 
         self::$initialized = true;
@@ -73,6 +96,8 @@ class Session
         ini_set('session.use_strict_mode', '1');
         ini_set('session.use_only_cookies', '1');
         ini_set('session.cookie_httponly', '1');
+        // Keep session file as long as the cookie so "private computer" sessions don't get GC'd
+        ini_set('session.gc_maxlifetime', (string) $seconds);
 
         session_set_cookie_params([
             'lifetime' => $seconds,

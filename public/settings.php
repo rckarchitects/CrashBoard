@@ -108,9 +108,17 @@ if (isPost()) {
             if ($cacheType === 'all') {
                 cacheClear("email_{$userId}");
                 cacheClear("calendar_{$userId}");
+                cacheClear("calendar_heatmap_v2_{$userId}");
+                cacheClear("availability_{$userId}");
+                cacheClear("calendar_next_{$userId}_%");
+                cacheClear("calendar_next_event_{$userId}_%");
                 cacheClear("todo_{$userId}");
                 cacheClear("crm_{$userId}");
                 cacheClear("weather_{$userId}");
+                cacheClear("flagged_email_{$userId}");
+                cacheClear("flagged_email_count_{$userId}");
+                cacheClear("overdue_tasks_count_{$userId}");
+                cacheClear("train_departures_{$userId}_%");
                 Session::setFlash('success', 'All tile caches cleared.');
             } else {
                 cacheClear("{$cacheType}_{$userId}");
@@ -218,6 +226,11 @@ if (isPost()) {
                     Database::execute('ALTER TABLE users ADD COLUMN theme_tile_bg VARCHAR(7) DEFAULT "#ffffff" AFTER theme_header_text');
                     Database::execute('ALTER TABLE users ADD COLUMN theme_tile_text VARCHAR(7) DEFAULT "#374151" AFTER theme_tile_bg');
                 }
+                $screenLabelCol = Database::query("SHOW COLUMNS FROM users LIKE 'dashboard_screen1_label'");
+                if (empty($screenLabelCol)) {
+                    Database::execute("ALTER TABLE users ADD COLUMN dashboard_screen1_label VARCHAR(50) DEFAULT 'Main' AFTER theme_tile_text");
+                    Database::execute("ALTER TABLE users ADD COLUMN dashboard_screen2_label VARCHAR(50) DEFAULT 'Screen 2' AFTER dashboard_screen1_label");
+                }
             } catch (Exception $e) {
                 error_log('Theme migration: ' . $e->getMessage());
             }
@@ -256,15 +269,35 @@ if (isPost()) {
                 $font = 'system';
             }
 
+            $screen1Label = substr(trim(post('dashboard_screen1_label', 'Main')), 0, 50) ?: 'Main';
+            $screen2Label = substr(trim(post('dashboard_screen2_label', 'Screen 2')), 0, 50) ?: 'Screen 2';
+
             // Save to database
             try {
                 Database::execute(
-                    'UPDATE users SET theme_primary = ?, theme_secondary = ?, theme_background = ?, theme_font = ?, theme_header_bg = ?, theme_header_text = ?, theme_tile_bg = ?, theme_tile_text = ? WHERE id = ?',
-                    [$primary, $secondary, $background, $font, $headerBg, $headerText, $tileBg, $tileText, $userId]
+                    'UPDATE users SET theme_primary = ?, theme_secondary = ?, theme_background = ?, theme_font = ?, theme_header_bg = ?, theme_header_text = ?, theme_tile_bg = ?, theme_tile_text = ?, dashboard_screen1_label = ?, dashboard_screen2_label = ? WHERE id = ?',
+                    [$primary, $secondary, $background, $font, $headerBg, $headerText, $tileBg, $tileText, $screen1Label, $screen2Label, $userId]
                 );
-                Session::setFlash('success', 'Theme preferences saved successfully.');
+                Session::setFlash('success', 'Theme and dashboard screen names saved successfully.');
             } catch (Exception $e) {
                 Session::setFlash('error', 'Failed to save theme: ' . $e->getMessage());
+            }
+            break;
+
+        case 'save_planner_overview_limits':
+            $maxPlans = (int) post('planner_overview_max_plans', 10);
+            $maxTasksPerPlan = (int) post('planner_overview_max_tasks_per_plan', 15);
+            $maxPlans = max(1, min(50, $maxPlans));
+            $maxTasksPerPlan = max(1, min(100, $maxTasksPerPlan));
+            try {
+                Database::execute(
+                    'UPDATE users SET planner_overview_max_plans = ?, planner_overview_max_tasks_per_plan = ? WHERE id = ?',
+                    [$maxPlans, $maxTasksPerPlan, $userId]
+                );
+                cacheClear("planner_overview_v2_{$userId}");
+                Session::setFlash('success', 'Planner overview limits saved. Refresh your dashboard to see the change.');
+            } catch (Exception $e) {
+                Session::setFlash('error', 'Failed to save: ' . $e->getMessage());
             }
             break;
 
@@ -351,6 +384,415 @@ if (isPost()) {
             }
             break;
 
+        case 'add_link_board_tile':
+            $existing = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'link-board']
+            );
+            if ($existing) {
+                Session::setFlash('error', 'Link board tile already exists on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'link-board', 'Link board', $newPosition, 2, 1, true]
+                    );
+                    Session::setFlash('success', 'Link board tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add link board tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'generate_link_board_share_key':
+            $newKey = bin2hex(random_bytes(32));
+            try {
+                Database::execute(
+                    'UPDATE users SET link_board_share_key = ? WHERE id = ?',
+                    [$newKey, $userId]
+                );
+                Session::setFlash('success', 'Share link generated. Use the URL below from your phone or iOS Shortcuts.');
+            } catch (Exception $e) {
+                Session::setFlash('error', 'Failed to generate share link: ' . $e->getMessage());
+            }
+            break;
+
+        case 'save_link_board_share_category':
+            $catId = post('link_board_share_category_id');
+            $catId = $catId === '' || $catId === null ? null : (int) $catId;
+            if ($catId !== null && $catId <= 0) {
+                $catId = null;
+            }
+            if ($catId !== null) {
+                $owned = Database::queryOne('SELECT id FROM link_board_categories WHERE id = ? AND user_id = ?', [$catId, $userId]);
+                if (!$owned) {
+                    $catId = null;
+                }
+            }
+            try {
+                Database::execute(
+                    'UPDATE users SET link_board_share_category_id = ? WHERE id = ?',
+                    [$catId, $userId]
+                );
+                Session::setFlash('success', 'Default category for shared links saved.');
+            } catch (Exception $e) {
+                Session::setFlash('error', 'Failed to save: ' . $e->getMessage());
+            }
+            break;
+
+        case 'add_calendar_next_tile':
+            $title = trim(post('calendar_next_title', 'Next event'));
+            $category = trim(post('calendar_next_category', ''));
+            if ($category === '') {
+                Session::setFlash('error', 'Please enter an Outlook category name.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                $settings = json_encode(['category' => $category]);
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled, settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'calendar-next', $title ?: 'Next event', $newPosition, 1, 1, true, $settings]
+                    );
+                    Session::setFlash('success', 'Next event tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'update_calendar_next_tile':
+            $tileId = (int) post('calendar_next_tile_id', 0);
+            $title = trim(post('calendar_next_title', 'Next event'));
+            $category = trim(post('calendar_next_category', ''));
+            if ($tileId <= 0) {
+                Session::setFlash('error', 'Invalid tile.');
+            } elseif ($category === '') {
+                Session::setFlash('error', 'Please enter an Outlook category name.');
+            } else {
+                $existing = Database::queryOne(
+                    'SELECT id FROM tiles WHERE id = ? AND user_id = ? AND tile_type = ?',
+                    [$tileId, $userId, 'calendar-next']
+                );
+                if (!$existing) {
+                    Session::setFlash('error', 'Tile not found.');
+                } else {
+                    $settings = json_encode(['category' => $category]);
+                    try {
+                        Database::execute(
+                            'UPDATE tiles SET title = ?, settings = ? WHERE id = ? AND user_id = ?',
+                            [$title ?: 'Next event', $settings, $tileId, $userId]
+                        );
+                        cacheClear("calendar_next_{$userId}_{$tileId}");
+                        Session::setFlash('success', 'Next event tile updated. Refresh your dashboard to see changes.');
+                    } catch (Exception $e) {
+                        Session::setFlash('error', 'Failed to update tile: ' . $e->getMessage());
+                    }
+                }
+            }
+            break;
+
+        case 'add_next_event_tile':
+            $hasNextEventTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'next-event']
+            );
+            if ($hasNextEventTile) {
+                Session::setFlash('error', 'Next event tile is already on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'next-event', 'Next event', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Next event tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_calendar_heatmap_tile':
+            $hasCalendarHeatmapTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'calendar-heatmap']
+            );
+            if ($hasCalendarHeatmapTile) {
+                Session::setFlash('error', 'Calendar heat map tile is already on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'calendar-heatmap', 'Calendar heat map', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Calendar heat map tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_flagged_email_tile':
+            $hasFlaggedTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'flagged-email']
+            );
+            if ($hasFlaggedTile) {
+                Session::setFlash('error', 'Flagged email reminder tile is already on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'flagged-email', 'Flagged email reminder', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Flagged email reminder tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_availability_tile':
+            $hasAvailabilityTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'availability']
+            );
+            if ($hasAvailabilityTile) {
+                Session::setFlash('error', 'Availability tile is already on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'availability', 'Availability', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Availability tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_flagged_email_count_tile':
+            $hasFlaggedCountTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'flagged-email-count']
+            );
+            if ($hasFlaggedCountTile) {
+                Session::setFlash('error', 'Flagged email count tile is already on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'flagged-email-count', 'Flagged Emails', $newPosition, 1, 1, true]
+                    );
+                    Session::setFlash('success', 'Flagged email count tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_overdue_tasks_count_tile':
+            $hasOverdueCountTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'overdue-tasks-count']
+            );
+            if ($hasOverdueCountTile) {
+                Session::setFlash('error', 'Overdue tasks count tile is already on your dashboard.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'overdue-tasks-count', 'Overdue Tasks', $newPosition, 1, 1, true]
+                    );
+                    cacheClear("overdue_tasks_count_{$userId}");
+                    Session::setFlash('success', 'Overdue tasks count tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_todo_personal_tile':
+            $hasTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'todo-personal']
+            );
+            if ($hasTile) {
+                Session::setFlash('error', 'Personal Tasks tile already exists.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'todo-personal', 'Personal Tasks', $newPosition, 1, 1, true]
+                    );
+                    cacheClear("todo_personal_{$userId}");
+                    Session::setFlash('success', 'Personal Tasks tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_planner_overview_tile':
+            $hasPlannerOverviewTile = Database::queryOne(
+                'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                [$userId, 'planner-overview']
+            );
+            if ($hasPlannerOverviewTile) {
+                Session::setFlash('error', 'Planner overview tile already exists.');
+            } else {
+                $maxPos = Database::queryOne(
+                    'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                    [$userId]
+                );
+                $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                try {
+                    Database::execute(
+                        'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        [$userId, 'planner-overview', 'Planner overview', $newPosition, 2, 1, true]
+                    );
+                    cacheClear("planner_overview_v2_{$userId}");
+                    Session::setFlash('success', 'Planner overview tile added. Refresh your dashboard to see it.');
+                } catch (Exception $e) {
+                    Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                }
+            }
+            break;
+
+        case 'add_train_departures_tile':
+            $originCrs = strtoupper(trim(post('train_origin_crs', '')));
+            $originName = trim(post('train_origin_name', ''));
+            $destinationCrs = strtoupper(trim(post('train_destination_crs', '')));
+            $destinationName = trim(post('train_destination_name', ''));
+            $numDepartures = (int) post('train_num_departures', 5);
+            $numDepartures = max(1, min(10, $numDepartures));
+            
+            if (empty($originCrs) || empty($destinationCrs)) {
+                Session::setFlash('error', 'Please provide both origin and destination station codes.');
+            } elseif (!preg_match('/^[A-Z]{3}$/', $originCrs) || !preg_match('/^[A-Z]{3}$/', $destinationCrs)) {
+                Session::setFlash('error', 'Station codes must be 3 uppercase letters (e.g., PAD, BRI, MAN).');
+            } else {
+                $hasTile = Database::queryOne(
+                    'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                    [$userId, 'train-departures']
+                );
+                if ($hasTile) {
+                    Session::setFlash('error', 'Train departures tile already exists.');
+                } else {
+                    $maxPos = Database::queryOne(
+                        'SELECT MAX(position) as max_pos FROM tiles WHERE user_id = ? AND is_enabled = TRUE',
+                        [$userId]
+                    );
+                    $newPosition = ($maxPos['max_pos'] ?? 0) + 1;
+                    $settings = json_encode([
+                        'origin_crs' => $originCrs,
+                        'origin_name' => $originName ?: $originCrs,
+                        'destination_crs' => $destinationCrs,
+                        'destination_name' => $destinationName ?: $destinationCrs,
+                        'num_departures' => $numDepartures
+                    ]);
+                    try {
+                        Database::execute(
+                            'INSERT INTO tiles (user_id, tile_type, title, position, column_span, row_span, is_enabled, settings) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                            [$userId, 'train-departures', 'Train Departures', $newPosition, 1, 1, true, $settings]
+                        );
+                        cacheClear("train_departures_{$userId}_%");
+                        Session::setFlash('success', 'Train departures tile added. Refresh your dashboard to see it.');
+                    } catch (Exception $e) {
+                        Session::setFlash('error', 'Failed to add tile: ' . $e->getMessage());
+                    }
+                }
+            }
+            break;
+
+        case 'update_train_departures_tile':
+            $tileId = (int) post('train_tile_id', 0);
+            $originCrs = strtoupper(trim(post('train_origin_crs', '')));
+            $originName = trim(post('train_origin_name', ''));
+            $destinationCrs = strtoupper(trim(post('train_destination_crs', '')));
+            $destinationName = trim(post('train_destination_name', ''));
+            $numDepartures = (int) post('train_num_departures', 5);
+            $numDepartures = max(1, min(10, $numDepartures));
+            
+            if ($tileId <= 0) {
+                Session::setFlash('error', 'Invalid tile.');
+            } elseif (empty($originCrs) || empty($destinationCrs)) {
+                Session::setFlash('error', 'Please provide both origin and destination station codes.');
+            } elseif (!preg_match('/^[A-Z]{3}$/', $originCrs) || !preg_match('/^[A-Z]{3}$/', $destinationCrs)) {
+                Session::setFlash('error', 'Station codes must be 3 uppercase letters (e.g., PAD, BRI, MAN).');
+            } else {
+                $existing = Database::queryOne(
+                    'SELECT id FROM tiles WHERE id = ? AND user_id = ? AND tile_type = ?',
+                    [$tileId, $userId, 'train-departures']
+                );
+                if (!$existing) {
+                    Session::setFlash('error', 'Tile not found.');
+                } else {
+                    $settings = json_encode([
+                        'origin_crs' => $originCrs,
+                        'origin_name' => $originName ?: $originCrs,
+                        'destination_crs' => $destinationCrs,
+                        'destination_name' => $destinationName ?: $destinationCrs,
+                        'num_departures' => $numDepartures
+                    ]);
+                    try {
+                        Database::execute(
+                            'UPDATE tiles SET settings = ? WHERE id = ? AND user_id = ?',
+                            [$settings, $tileId, $userId]
+                        );
+                        cacheClear("train_departures_{$userId}_{$tileId}");
+                        Session::setFlash('success', 'Train departures tile updated. Refresh your dashboard to see changes.');
+                    } catch (Exception $e) {
+                        Session::setFlash('error', 'Failed to update tile: ' . $e->getMessage());
+                    }
+                }
+            }
+            break;
+
         case 'save_email_preview':
             // Ensure email_preview_chars column exists (migration)
             try {
@@ -376,6 +818,61 @@ if (isPost()) {
                 Session::setFlash('error', 'Failed to save: ' . $e->getMessage());
             }
             break;
+
+        case 'save_tile_refresh_rates':
+            $tileRefreshRates = post('tile_refresh_rates', []);
+            $updated = 0;
+            $errors = [];
+
+            foreach ($tileRefreshRates as $tileId => $refreshInterval) {
+                $tileId = (int) $tileId;
+                $refreshInterval = (int) $refreshInterval;
+                
+                // Validate: refresh interval must be between 30 seconds (30) and 1 hour (3600)
+                if ($refreshInterval < 30 || $refreshInterval > 3600) {
+                    $errors[] = "Tile ID {$tileId}: Refresh interval must be between 30 seconds and 1 hour.";
+                    continue;
+                }
+
+                // Verify tile belongs to user
+                $tile = Database::queryOne(
+                    'SELECT id, settings FROM tiles WHERE id = ? AND user_id = ?',
+                    [$tileId, $userId]
+                );
+
+                if (!$tile) {
+                    $errors[] = "Tile ID {$tileId}: Tile not found.";
+                    continue;
+                }
+
+                // Get existing settings or create new
+                $settings = !empty($tile['settings']) ? json_decode($tile['settings'], true) : [];
+                if (!is_array($settings)) {
+                    $settings = [];
+                }
+
+                // Update refresh interval
+                $settings['refresh_interval'] = $refreshInterval;
+
+                try {
+                    Database::execute(
+                        'UPDATE tiles SET settings = ? WHERE id = ? AND user_id = ?',
+                        [json_encode($settings), $tileId, $userId]
+                    );
+                    $updated++;
+                } catch (Exception $e) {
+                    $errors[] = "Tile ID {$tileId}: " . $e->getMessage();
+                }
+            }
+
+            if (!empty($errors)) {
+                Session::setFlash('error', 'Some refresh rates could not be saved: ' . implode(' ', $errors));
+            } elseif ($updated > 0) {
+                Session::setFlash('success', "Refresh rates updated for {$updated} tile(s). Refresh your dashboard to see changes.");
+            } else {
+                Session::setFlash('info', 'No changes to save.');
+            }
+            break;
     }
 
     redirect('/settings.php');
@@ -391,13 +888,29 @@ try {
     if (empty($emailPreviewCol)) {
         Database::execute('ALTER TABLE users ADD COLUMN email_preview_chars INT UNSIGNED DEFAULT 320 AFTER updated_at');
     }
+    $screenLabelCol = Database::query("SHOW COLUMNS FROM users LIKE 'dashboard_screen1_label'");
+    if (empty($screenLabelCol)) {
+        Database::execute("ALTER TABLE users ADD COLUMN dashboard_screen1_label VARCHAR(50) DEFAULT 'Main'");
+        Database::execute("ALTER TABLE users ADD COLUMN dashboard_screen2_label VARCHAR(50) DEFAULT 'Screen 2'");
+    }
+    $plannerMaxPlansCol = Database::query("SHOW COLUMNS FROM users LIKE 'planner_overview_max_plans'");
+    if (empty($plannerMaxPlansCol)) {
+        Database::execute('ALTER TABLE users ADD COLUMN planner_overview_max_plans TINYINT UNSIGNED DEFAULT NULL');
+        Database::execute('ALTER TABLE users ADD COLUMN planner_overview_max_tasks_per_plan TINYINT UNSIGNED DEFAULT NULL');
+    }
+    $shareKeyCol = Database::query("SHOW COLUMNS FROM users LIKE 'link_board_share_key'");
+    if (empty($shareKeyCol)) {
+        Database::execute('ALTER TABLE users ADD COLUMN link_board_share_key VARCHAR(64) NULL DEFAULT NULL');
+        Database::execute('ALTER TABLE users ADD COLUMN link_board_share_category_id INT UNSIGNED NULL DEFAULT NULL');
+        Database::execute('CREATE UNIQUE INDEX idx_users_link_board_share_key ON users (link_board_share_key)');
+    }
 } catch (Exception $e) {
-    error_log('Email preview chars migration: ' . $e->getMessage());
+    error_log('Settings migration: ' . $e->getMessage());
 }
 
 // Get user theme and email preview preferences from database
 $userTheme = Database::queryOne(
-    'SELECT theme_primary, theme_secondary, theme_background, theme_font, theme_header_bg, theme_header_text, theme_tile_bg, theme_tile_text, email_preview_chars FROM users WHERE id = ?',
+    'SELECT theme_primary, theme_secondary, theme_background, theme_font, theme_header_bg, theme_header_text, theme_tile_bg, theme_tile_text, email_preview_chars, dashboard_screen1_label, dashboard_screen2_label, planner_overview_max_plans, planner_overview_max_tasks_per_plan FROM users WHERE id = ?',
     [$userId]
 );
 
@@ -460,9 +973,16 @@ function formatRemainingTime(int $seconds): string
 $cacheStatus = [
     'email' => getCacheStatus($userId, 'email'),
     'calendar' => getCacheStatus($userId, 'calendar'),
+    'calendar_heatmap_v2' => getCacheStatus($userId, 'calendar_heatmap_v2'),
+    'availability' => getCacheStatus($userId, 'availability'),
     'todo' => getCacheStatus($userId, 'todo'),
     'crm' => getCacheStatus($userId, 'crm'),
     'weather' => getCacheStatus($userId, 'weather'),
+    'flagged_email' => getCacheStatus($userId, 'flagged_email'),
+    'flagged_email_count' => getCacheStatus($userId, 'flagged_email_count'),
+    'overdue_tasks_count' => getCacheStatus($userId, 'overdue_tasks_count'),
+    'planner_overview' => getCacheStatus($userId, 'planner_overview_v2'),
+    'train_departures' => null, // Per-tile caching, handled separately
 ];
 
 // Get weather settings
@@ -477,6 +997,23 @@ try {
     }
 } catch (Exception $e) {
     // Weather provider not yet added to database ENUM - this is expected until migration is run
+}
+
+// Get all tiles for refresh rate configuration
+$userTiles = Database::query(
+    'SELECT id, tile_type, title, settings FROM tiles WHERE user_id = ? AND is_enabled = TRUE ORDER BY position ASC',
+    [$userId]
+);
+
+// Helper function to get refresh interval for a tile
+function getTileRefreshInterval(array $tile): int {
+    $settings = !empty($tile['settings']) ? json_decode($tile['settings'], true) : [];
+    if (isset($settings['refresh_interval'])) {
+        return (int) $settings['refresh_interval'];
+    }
+    // Use config defaults per tile type
+    $tileType = $tile['tile_type'];
+    return config("refresh.{$tileType}", config('refresh.default_interval', 300));
 }
 
 $pageTitle = 'Settings - CrashBoard';
@@ -893,18 +1430,19 @@ $pageTitle = 'Settings - CrashBoard';
             <div class="p-6">
                 <div class="space-y-4">
                     <!-- Quick Notes Tile -->
-                    <div class="flex items-start justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 mb-4">
-                        <div class="flex items-start">
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
                             <div class="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                 <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
                                 </svg>
                             </div>
-                            <div class="ml-4">
+                            <div class="ml-4 min-w-0">
                                 <h3 class="text-sm font-medium text-gray-900">Quick Notes</h3>
                                 <p class="text-sm text-gray-500 mt-1">A simple note-taking tile with auto-save functionality. Perfect for jotting down quick thoughts and reminders.</p>
                             </div>
                         </div>
+                        <div class="flex-shrink-0 w-28 text-right">
                         <?php
                         $hasNotesTile = Database::queryOne(
                             'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
@@ -924,21 +1462,23 @@ $pageTitle = 'Settings - CrashBoard';
                             </button>
                         </form>
                         <?php endif; ?>
+                        </div>
                     </div>
 
                     <!-- Saved Notes List Tile -->
-                    <div class="flex items-start justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        <div class="flex items-start">
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
                             <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                 <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                                 </svg>
                             </div>
-                            <div class="ml-4">
+                            <div class="ml-4 min-w-0">
                                 <h3 class="text-sm font-medium text-gray-900">Saved Notes List</h3>
                                 <p class="text-sm text-gray-500 mt-1">View and access your saved notes. Click on any note to load it back into the Quick Notes tile for editing.</p>
                             </div>
                         </div>
+                        <div class="flex-shrink-0 w-28 text-right">
                         <?php
                         $hasNotesListTile = Database::queryOne(
                             'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
@@ -958,21 +1498,23 @@ $pageTitle = 'Settings - CrashBoard';
                             </button>
                         </form>
                         <?php endif; ?>
+                        </div>
                     </div>
 
                     <!-- Bookmarks Tile -->
-                    <div class="flex items-start justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        <div class="flex items-start">
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
                             <div class="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0">
                                 <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
                                 </svg>
                             </div>
-                            <div class="ml-4">
+                            <div class="ml-4 min-w-0">
                                 <h3 class="text-sm font-medium text-gray-900">Bookmarks</h3>
                                 <p class="text-sm text-gray-500 mt-1">Save URLs and open them from a tile. Shows favicons; click to open in a new tab.</p>
                             </div>
                         </div>
+                        <div class="flex-shrink-0 w-28 text-right">
                         <?php
                         $hasBookmarksTile = Database::queryOne(
                             'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
@@ -992,8 +1534,648 @@ $pageTitle = 'Settings - CrashBoard';
                             </button>
                         </form>
                         <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Link board Tile -->
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Link board</h3>
+                                <p class="text-sm text-gray-500 mt-1">Organise URLs in categories (kanban-style). Drag links between columns. Optional AI-generated page summaries.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php
+                        $hasLinkBoardTile = Database::queryOne(
+                            'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                            [$userId, 'link-board']
+                        );
+                        ?>
+                        <?php if ($hasLinkBoardTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_link_board_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Link board: Share from phone -->
+                    <?php
+                    $linkBoardShare = Database::queryOne(
+                        'SELECT link_board_share_key, link_board_share_category_id FROM users WHERE id = ?',
+                        [$userId]
+                    );
+                    $linkBoardShareKey = $linkBoardShare['link_board_share_key'] ?? null;
+                    $linkBoardShareCategoryId = isset($linkBoardShare['link_board_share_category_id']) ? (int) $linkBoardShare['link_board_share_category_id'] : null;
+                    $linkBoardCategories = [];
+                    $catTable = Database::queryOne("SHOW TABLES LIKE 'link_board_categories'");
+                    if (!empty($catTable)) {
+                        $linkBoardCategories = Database::query(
+                            'SELECT id, name FROM link_board_categories WHERE user_id = ? ORDER BY position ASC, id ASC',
+                            [$userId]
+                        );
+                    }
+                    $receiveUrlBase = rtrim(config('app.url', ''), '/') . '/receiveurl.php';
+                    ?>
+                    <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start">
+                            <div class="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 flex-1 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Link board: Share from phone</h3>
+                                <p class="text-sm text-gray-500 mt-1">Generate a secret URL to add links to your Link board from your iPhone share sheet (e.g. via Shortcuts). No login required on the device.</p>
+                                <?php if ($linkBoardShareKey): ?>
+                                <div class="mt-4 space-y-3">
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-600 mb-1">Endpoint (POST only)</label>
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <input type="text" id="link-board-share-url" readonly value="<?= e($receiveUrlBase) ?>" class="block flex-1 min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm bg-gray-50 font-mono">
+                                            <button type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('link-board-share-url').value)" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50">Copy URL</button>
+                                        </div>
+                                        <p class="text-xs text-gray-500 mt-1">In Shortcuts: use <strong>Get contents of URL</strong> or <strong>Post</strong> with method POST. Send <code class="bg-gray-200 px-1 rounded">key</code> and <code class="bg-gray-200 px-1 rounded">url</code> in the request body (form or JSON). The shared link goes in <code class="bg-gray-200 px-1 rounded">url</code> — no encoding needed.</p>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-gray-600 mb-1">Your secret key (use as <code class="bg-gray-200 px-1 rounded">key</code> in POST body)</label>
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <input type="text" id="link-board-share-key" readonly value="<?= e($linkBoardShareKey) ?>" class="block flex-1 min-w-0 rounded-lg border border-gray-300 px-3 py-2 text-sm bg-gray-50 font-mono">
+                                            <button type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('link-board-share-key').value)" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50">Copy key</button>
+                                        </div>
+                                    </div>
+                                    <form action="" method="POST" class="flex flex-wrap items-end gap-3">
+                                        <?= Session::csrfField() ?>
+                                        <input type="hidden" name="action" value="save_link_board_share_category">
+                                        <div>
+                                            <label for="link_board_share_category_id" class="block text-xs font-medium text-gray-600 mb-1">Default category for shared links</label>
+                                            <select id="link_board_share_category_id" name="link_board_share_category_id" class="block rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-teal-500 focus:ring-teal-500">
+                                                <option value="">First category (auto)</option>
+                                                <?php foreach ($linkBoardCategories as $c): ?>
+                                                <option value="<?= (int)$c['id'] ?>" <?= $linkBoardShareCategoryId === (int)$c['id'] ? 'selected' : '' ?>><?= e($c['name']) ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">Save category</button>
+                                    </form>
+                                    <form action="" method="POST" class="inline">
+                                        <?= Session::csrfField() ?>
+                                        <input type="hidden" name="action" value="generate_link_board_share_key">
+                                        <button type="submit" class="text-sm text-amber-600 hover:text-amber-800" onclick="return confirm('Regenerate key? Your current share URL will stop working.');">Regenerate secret key</button>
+                                    </form>
+                                </div>
+                                <?php else: ?>
+                                <form action="" method="POST" class="mt-4">
+                                    <?= Session::csrfField() ?>
+                                    <input type="hidden" name="action" value="generate_link_board_share_key">
+                                    <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">Generate share link</button>
+                                </form>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Next event by category (Outlook calendar) -->
+                    <?php
+                    $calendarNextTile = Database::queryOne(
+                        'SELECT id, title, settings FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE ORDER BY position ASC LIMIT 1',
+                        [$userId, 'calendar-next']
+                    );
+                    $calendarNextTitle = 'Next event';
+                    $calendarNextCategory = '';
+                    $calendarNextTileId = 0;
+                    if ($calendarNextTile) {
+                        $calendarNextTitle = $calendarNextTile['title'] ?? $calendarNextTitle;
+                        $calendarNextTileId = (int) $calendarNextTile['id'];
+                        $settingsDecoded = json_decode($calendarNextTile['settings'] ?? '{}', true);
+                        $calendarNextCategory = is_array($settingsDecoded) ? trim($settingsDecoded['category'] ?? '') : '';
+                    }
+                    ?>
+                    <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start gap-4">
+                            <div class="w-10 h-10 bg-sky-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Next event by category</h3>
+                                <p class="text-sm text-gray-500 mt-1">Shows the date and details of the next calendar event with a specific Outlook category. Connect Microsoft 365 first.</p>
+                                <form action="" method="POST" class="mt-4 flex flex-wrap items-end gap-3">
+                                <?= Session::csrfField() ?>
+                                <input type="hidden" name="action" value="<?= $calendarNextTileId ? 'update_calendar_next_tile' : 'add_calendar_next_tile' ?>">
+                                <?php if ($calendarNextTileId): ?>
+                                <input type="hidden" name="calendar_next_tile_id" value="<?= $calendarNextTileId ?>">
+                                <?php endif; ?>
+                                <div>
+                                    <label for="calendar_next_title" class="block text-xs font-medium text-gray-600 mb-1">Tile title</label>
+                                    <input type="text" id="calendar_next_title" name="calendar_next_title" value="<?= e($calendarNextTitle) ?>" maxlength="100"
+                                        class="block w-40 rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-sky-500">
+                                </div>
+                                <div>
+                                    <label for="calendar_next_category" class="block text-xs font-medium text-gray-600 mb-1">Outlook category <span class="text-red-500">*</span></label>
+                                    <input type="text" id="calendar_next_category" name="calendar_next_category" value="<?= e($calendarNextCategory) ?>" required placeholder="e.g. Red Category, Personal"
+                                        class="block w-48 rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-sky-500">
+                                </div>
+                                <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500">
+                                    <?= $calendarNextTileId ? 'Update tile' : 'Add Tile' ?>
+                                </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Next event (prominent with countdown) -->
+                    <?php
+                    $hasNextEventTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                        [$userId, 'next-event']
+                    );
+                    ?>
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Next event</h3>
+                                <p class="text-sm text-gray-500 mt-1">Shows your next calendar event prominently with a live countdown to the start time. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php if ($hasNextEventTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_next_event_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Calendar heat map tile -->
+                    <?php
+                    $hasCalendarHeatmapTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                        [$userId, 'calendar-heatmap']
+                    );
+                    ?>
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-teal-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Calendar heat map</h3>
+                                <p class="text-sm text-gray-500 mt-1">Shows the current week plus the next four weeks (weekdays only) with background shading by number of events per day. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php if ($hasCalendarHeatmapTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_calendar_heatmap_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-teal-600 hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-teal-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Availability tile -->
+                    <?php
+                    $hasAvailabilityTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                        [$userId, 'availability']
+                    );
+                    ?>
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Availability</h3>
+                                <p class="text-sm text-gray-500 mt-1">Shows your available meeting times for the coming fortnight (starting next week). Finds gaps in your calendar with a 1-hour buffer. Includes a button to copy the list to your clipboard. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php if ($hasAvailabilityTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_availability_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Train departures tile -->
+                    <?php
+                    $trainDeparturesTile = Database::queryOne(
+                        'SELECT id, settings FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE ORDER BY position ASC LIMIT 1',
+                        [$userId, 'train-departures']
+                    );
+                    $trainTileId = 0;
+                    $trainOriginCrs = '';
+                    $trainOriginName = '';
+                    $trainDestinationCrs = '';
+                    $trainDestinationName = '';
+                    $trainNumDepartures = 5;
+                    if ($trainDeparturesTile) {
+                        $trainTileId = (int) $trainDeparturesTile['id'];
+                        $settingsDecoded = json_decode($trainDeparturesTile['settings'] ?? '{}', true);
+                        if (is_array($settingsDecoded)) {
+                            $trainOriginCrs = trim($settingsDecoded['origin_crs'] ?? '');
+                            $trainOriginName = trim($settingsDecoded['origin_name'] ?? '');
+                            $trainDestinationCrs = trim($settingsDecoded['destination_crs'] ?? '');
+                            $trainDestinationName = trim($settingsDecoded['destination_name'] ?? '');
+                            $trainNumDepartures = isset($settingsDecoded['num_departures']) ? (int)$settingsDecoded['num_departures'] : 5;
+                        }
+                    }
+                    ?>
+                    <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start gap-4">
+                            <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                                </svg>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Train Departures</h3>
+                                <p class="text-sm text-gray-500 mt-1">Shows the next few departures from a UK railway station to a destination station. Uses National Rail data via Huxley 2 API. Station codes must be 3-letter CRS codes (e.g., PAD for London Paddington, BRI for Bristol Temple Meads).</p>
+                                <form action="" method="POST" class="mt-4 space-y-4">
+                                <?= Session::csrfField() ?>
+                                <input type="hidden" name="action" value="<?= $trainTileId ? 'update_train_departures_tile' : 'add_train_departures_tile' ?>">
+                                <?php if ($trainTileId): ?>
+                                <input type="hidden" name="train_tile_id" value="<?= $trainTileId ?>">
+                                <?php endif; ?>
+                                <div class="grid grid-cols-2 gap-x-6 gap-y-4 max-w-xl">
+                                    <div>
+                                        <label for="train_origin_crs" class="block text-xs font-medium text-gray-600 mb-1">Origin CRS <span class="text-red-500">*</span></label>
+                                        <input type="text" id="train_origin_crs" name="train_origin_crs" value="<?= e($trainOriginCrs) ?>" required placeholder="PAD" maxlength="3" pattern="[A-Z]{3}" style="text-transform: uppercase;"
+                                            class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-red-500 focus:ring-red-500">
+                                        <p class="mt-1 text-xs text-gray-400 min-h-[1.25rem]">3 letters</p>
+                                    </div>
+                                    <div>
+                                        <label for="train_origin_name" class="block text-xs font-medium text-gray-600 mb-1">Origin Name</label>
+                                        <input type="text" id="train_origin_name" name="train_origin_name" value="<?= e($trainOriginName) ?>" placeholder="London Paddington" maxlength="50"
+                                            class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-red-500 focus:ring-red-500">
+                                        <p class="mt-1 text-xs text-gray-400 min-h-[1.25rem]">&nbsp;</p>
+                                    </div>
+                                    <div>
+                                        <label for="train_destination_crs" class="block text-xs font-medium text-gray-600 mb-1">Destination CRS <span class="text-red-500">*</span></label>
+                                        <input type="text" id="train_destination_crs" name="train_destination_crs" value="<?= e($trainDestinationCrs) ?>" required placeholder="BRI" maxlength="3" pattern="[A-Z]{3}" style="text-transform: uppercase;"
+                                            class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-red-500 focus:ring-red-500">
+                                        <p class="mt-1 text-xs text-gray-400 min-h-[1.25rem]">3 letters</p>
+                                    </div>
+                                    <div>
+                                        <label for="train_destination_name" class="block text-xs font-medium text-gray-600 mb-1">Destination Name</label>
+                                        <input type="text" id="train_destination_name" name="train_destination_name" value="<?= e($trainDestinationName) ?>" placeholder="Bristol Temple Meads" maxlength="50"
+                                            class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-red-500 focus:ring-red-500">
+                                        <p class="mt-1 text-xs text-gray-400 min-h-[1.25rem]">&nbsp;</p>
+                                    </div>
+                                </div>
+                                <div class="flex flex-wrap items-end gap-4">
+                                    <div>
+                                        <label for="train_num_departures" class="block text-xs font-medium text-gray-600 mb-1">Number to show</label>
+                                        <input type="number" id="train_num_departures" name="train_num_departures" value="<?= $trainNumDepartures ?>" min="1" max="10"
+                                            class="block w-20 rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-red-500 focus:ring-red-500">
+                                    </div>
+                                    <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
+                                        <?= $trainTileId ? 'Update tile' : 'Add Tile' ?>
+                                    </button>
+                                </div>
+                                </form>
+                                <p class="mt-2 text-xs text-gray-500">
+                                    <strong>Common station codes:</strong> PAD (London Paddington), BRI (Bristol Temple Meads), MAN (Manchester Piccadilly), EUS (London Euston), KGX (London King's Cross), VIC (London Victoria), BHM (Birmingham New Street), LDS (Leeds), LIV (Liverpool Lime Street), EDI (Edinburgh Waverley)
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Flagged email reminder tile -->
+                    <?php
+                    $hasFlaggedEmailTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                        [$userId, 'flagged-email']
+                    );
+                    ?>
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+                                    <line x1="4" y1="22" x2="4" y2="15" stroke-width="2"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Flagged email reminder</h3>
+                                <p class="text-sm text-gray-500 mt-1">Shows a random flagged email from your Microsoft inbox as a reminder to respond or unflag it. Refreshing the tile picks another. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php if ($hasFlaggedEmailTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_flagged_email_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Flagged email count tile -->
+                    <?php
+                    $hasFlaggedEmailCountTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                        [$userId, 'flagged-email-count']
+                    );
+                    ?>
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/>
+                                    <line x1="4" y1="22" x2="4" y2="15" stroke-width="2"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Flagged email count</h3>
+                                <p class="text-sm text-gray-500 mt-1">Displays the total number of flagged emails in your Microsoft inbox as a large centered number. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php if ($hasFlaggedEmailCountTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_flagged_email_count_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Overdue tasks count tile -->
+                    <?php
+                    $hasOverdueTasksCountTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                        [$userId, 'overdue-tasks-count']
+                    );
+                    ?>
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Overdue tasks count</h3>
+                                <p class="text-sm text-gray-500 mt-1">Displays the total number of incomplete Microsoft To Do tasks that are overdue (due date in the past), as a large centered number. Same style as the flagged email count tile. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php if ($hasOverdueTasksCountTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_overdue_tasks_count_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Personal Tasks tile -->
+                    <?php
+                    $hasTodoPersonalTile = Database::queryOne(
+                        'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                        [$userId, 'todo-personal']
+                    );
+                    ?>
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Personal Tasks</h3>
+                                <p class="text-sm text-gray-500 mt-1">Shows all incomplete tasks from your personal Microsoft To Do list. Separate from Planner tasks - this tile always shows your To Do tasks regardless of the Tasks tile configuration. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php if ($hasTodoPersonalTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_todo_personal_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
+                    </div>
+
+                    <!-- Planner overview -->
+                    <div class="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <div class="flex items-start flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                                </svg>
+                            </div>
+                            <div class="ml-4 min-w-0">
+                                <h3 class="text-sm font-medium text-gray-900">Planner overview</h3>
+                                <p class="text-sm text-gray-500 mt-1">Large tile showing all outstanding Microsoft Planner tasks assigned to you, grouped by plan in columns. Connect Microsoft 365 first.</p>
+                            </div>
+                        </div>
+                        <div class="flex-shrink-0 w-28 text-right">
+                        <?php
+                        $hasPlannerOverviewTile = Database::queryOne(
+                            'SELECT id FROM tiles WHERE user_id = ? AND tile_type = ? AND is_enabled = TRUE',
+                            [$userId, 'planner-overview']
+                        );
+                        ?>
+                        <?php if ($hasPlannerOverviewTile): ?>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            Added
+                        </span>
+                        <?php else: ?>
+                        <form action="" method="POST" class="inline">
+                            <?= Session::csrfField() ?>
+                            <input type="hidden" name="action" value="add_planner_overview_tile">
+                            <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+                                Add Tile
+                            </button>
+                        </form>
+                        <?php endif; ?>
+                        </div>
                     </div>
                 </div>
+            </div>
+        </section>
+
+        <!-- Tile Refresh Rates -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Tile Refresh Rates</h2>
+                <p class="mt-1 text-sm text-gray-500">Configure how often each tile automatically refreshes its data. Values are in seconds (minimum 30, maximum 3600).</p>
+            </div>
+
+            <div class="p-6">
+                <?php if (empty($userTiles)): ?>
+                <p class="text-sm text-gray-500">No tiles configured. Add tiles from the Tiles Management section above.</p>
+                <?php else: ?>
+                <form action="" method="POST" class="space-y-4">
+                    <?= Session::csrfField() ?>
+                    <input type="hidden" name="action" value="save_tile_refresh_rates">
+                    
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tile</th>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Refresh Interval</th>
+                                    <th scope="col" class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Preview</th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">
+                                <?php foreach ($userTiles as $tile): ?>
+                                <?php
+                                $tileType = $tile['tile_type'];
+                                $tileTitle = $tile['title'] ?? ucfirst(str_replace(['-', '_'], ' ', $tileType));
+                                $currentInterval = getTileRefreshInterval($tile);
+                                
+                                // Skip tiles that don't auto-refresh
+                                if (in_array($tileType, ['claude', 'notes', 'notes-list', 'bookmarks', 'link-board'])) {
+                                    continue;
+                                }
+                                
+                                // Format preview
+                                $preview = '';
+                                if ($currentInterval < 60) {
+                                    $preview = $currentInterval . ' seconds';
+                                } elseif ($currentInterval < 3600) {
+                                    $mins = floor($currentInterval / 60);
+                                    $secs = $currentInterval % 60;
+                                    $preview = $mins . 'm' . ($secs > 0 ? ' ' . $secs . 's' : '');
+                                } else {
+                                    $hours = floor($currentInterval / 3600);
+                                    $mins = floor(($currentInterval % 3600) / 60);
+                                    $preview = $hours . 'h' . ($mins > 0 ? ' ' . $mins . 'm' : '');
+                                }
+                                ?>
+                                <tr>
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                        <?= e($tileTitle) ?>
+                                    </td>
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                                        <?= e($tileType) ?>
+                                    </td>
+                                    <td class="px-4 py-3 whitespace-nowrap">
+                                        <div class="flex items-center space-x-2">
+                                            <input
+                                                type="number"
+                                                name="tile_refresh_rates[<?= $tile['id'] ?>]"
+                                                value="<?= $currentInterval ?>"
+                                                min="30"
+                                                max="3600"
+                                                step="30"
+                                                class="w-24 px-3 py-1.5 border border-gray-300 rounded-lg text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            >
+                                            <span class="text-sm text-gray-500">seconds</span>
+                                        </div>
+                                    </td>
+                                    <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                                        <?= e($preview) ?>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <?php
+                    $refreshableTiles = array_filter($userTiles, function($tile) {
+                        return !in_array($tile['tile_type'], ['claude', 'notes', 'notes-list', 'bookmarks', 'link-board']);
+                    });
+                    ?>
+                    <?php if (!empty($refreshableTiles)): ?>
+                    <div class="flex items-center justify-end pt-4 border-t border-gray-200">
+                        <button
+                            type="submit"
+                            class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                        >
+                            Save Refresh Rates
+                        </button>
+                    </div>
+                    <?php else: ?>
+                    <p class="text-sm text-gray-500 pt-4">No tiles support auto-refresh. Tiles like Claude AI, Notes, and Bookmarks refresh manually.</p>
+                    <?php endif; ?>
+                </form>
+                <?php endif; ?>
             </div>
         </section>
 
@@ -1010,9 +2192,17 @@ $pageTitle = 'Settings - CrashBoard';
                     $tileTypes = [
                         'email' => ['name' => 'Email', 'icon' => 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z', 'color' => 'blue'],
                         'calendar' => ['name' => 'Calendar', 'icon' => 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', 'color' => 'green'],
+                        'calendar_heatmap_v2' => ['name' => 'Calendar heat map', 'icon' => 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', 'color' => 'teal'],
+                        'availability' => ['name' => 'Availability', 'icon' => 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z', 'color' => 'indigo'],
                         'todo' => ['name' => 'Tasks', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', 'color' => 'purple'],
+                        'todo-personal' => ['name' => 'Personal Tasks', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', 'color' => 'blue'],
                         'crm' => ['name' => 'CRM Actions', 'icon' => 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z', 'color' => 'orange'],
                         'weather' => ['name' => 'Weather', 'icon' => 'M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z', 'color' => 'sky'],
+                        'flagged_email' => ['name' => 'Flagged email', 'icon' => 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z', 'color' => 'amber'],
+                        'flagged_email_count' => ['name' => 'Flagged email count', 'icon' => 'M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z', 'color' => 'amber'],
+                        'overdue_tasks_count' => ['name' => 'Overdue tasks count', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', 'color' => 'amber'],
+                        'planner_overview' => ['name' => 'Planner overview', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01', 'color' => 'purple'],
+                        'train_departures' => ['name' => 'Train Departures', 'icon' => 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4', 'color' => 'red'],
                     ];
                     ?>
 
@@ -1332,9 +2522,40 @@ $pageTitle = 'Settings - CrashBoard';
                         </div>
                     </div>
 
+                    <div class="mt-6 pt-6 border-t border-gray-200">
+                        <h3 class="text-sm font-medium text-gray-900 mb-3">Dashboard screen names</h3>
+                        <p class="text-xs text-gray-500 mb-4">Customise the labels for your dashboard tabs (e.g. "Home" and "Work").</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                                <label for="dashboard_screen1_label" class="block text-sm font-medium text-gray-700">First screen</label>
+                                <input
+                                    type="text"
+                                    id="dashboard_screen1_label"
+                                    name="dashboard_screen1_label"
+                                    maxlength="50"
+                                    value="<?= e($userTheme['dashboard_screen1_label'] ?? 'Main') ?>"
+                                    placeholder="Main"
+                                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                                >
+                            </div>
+                            <div>
+                                <label for="dashboard_screen2_label" class="block text-sm font-medium text-gray-700">Second screen</label>
+                                <input
+                                    type="text"
+                                    id="dashboard_screen2_label"
+                                    name="dashboard_screen2_label"
+                                    maxlength="50"
+                                    value="<?= e($userTheme['dashboard_screen2_label'] ?? 'Screen 2') ?>"
+                                    placeholder="Screen 2"
+                                    class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
+                                >
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="flex items-center justify-between pt-2">
                         <p class="text-xs text-gray-500">
-                            Your theme preferences are saved and applied across the entire dashboard.
+                            Your theme and dashboard screen names are saved and applied across the dashboard.
                         </p>
                         <button
                             type="submit"
@@ -1342,6 +2563,46 @@ $pageTitle = 'Settings - CrashBoard';
                         >
                             Save Theme
                         </button>
+                    </div>
+                </form>
+            </div>
+        </section>
+
+        <!-- Planner overview limits -->
+        <section class="bg-white rounded-xl shadow-sm border border-gray-200 mb-6">
+            <div class="p-6 border-b border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-900">Planner overview</h2>
+                <p class="mt-1 text-sm text-gray-500">
+                    Control how many plans and tasks are shown in the Planner overview tile. The large number at the top shows your total incomplete tasks; the columns below show up to these limits.
+                </p>
+            </div>
+            <div class="p-6">
+                <?php
+                $plannerMaxPlans = $userTheme['planner_overview_max_plans'] ?? config('planner_overview.max_plans', 10);
+                $plannerMaxTasksPerPlan = $userTheme['planner_overview_max_tasks_per_plan'] ?? config('planner_overview.max_tasks_per_plan', 15);
+                $plannerMaxPlans = max(1, min(50, (int) $plannerMaxPlans));
+                $plannerMaxTasksPerPlan = max(1, min(100, (int) $plannerMaxTasksPerPlan));
+                ?>
+                <form action="" method="POST" class="space-y-4 max-w-xl">
+                    <?= Session::csrfField() ?>
+                    <input type="hidden" name="action" value="save_planner_overview_limits">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <div>
+                            <label for="planner_overview_max_plans" class="block text-sm font-medium text-gray-700">Max plan columns</label>
+                            <input type="number" id="planner_overview_max_plans" name="planner_overview_max_plans" min="1" max="50" value="<?= (int) $plannerMaxPlans ?>"
+                                class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm">
+                            <p class="mt-1 text-xs text-gray-500">Number of plans (columns) to show (1–50).</p>
+                        </div>
+                        <div>
+                            <label for="planner_overview_max_tasks_per_plan" class="block text-sm font-medium text-gray-700">Max tasks per plan</label>
+                            <input type="number" id="planner_overview_max_tasks_per_plan" name="planner_overview_max_tasks_per_plan" min="1" max="100" value="<?= (int) $plannerMaxTasksPerPlan ?>"
+                                class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm">
+                            <p class="mt-1 text-xs text-gray-500">Tasks per column (1–100).</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between pt-2">
+                        <p class="text-xs text-gray-500">Clearing the planner cache after save may be needed to see changes immediately.</p>
+                        <button type="submit" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500">Save limits</button>
                     </div>
                 </form>
             </div>

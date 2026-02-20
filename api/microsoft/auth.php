@@ -139,6 +139,7 @@ function handleCallback(array $config): void
     cacheClear("email_{$userId}");
     cacheClear("calendar_{$userId}");
     cacheClear("todo_{$userId}");
+    cacheClear("flagged_email_{$userId}");
 
     Session::setFlash('success', 'Microsoft 365 connected successfully!');
     redirect('/index.php');
@@ -196,6 +197,7 @@ function disconnect(): void
     cacheClear("email_{$userId}");
     cacheClear("calendar_{$userId}");
     cacheClear("todo_{$userId}");
+    cacheClear("flagged_email_{$userId}");
 
     Session::setFlash('success', 'Microsoft 365 disconnected.');
     redirect('/settings.php');

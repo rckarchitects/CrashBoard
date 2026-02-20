@@ -77,6 +77,40 @@ try {
 }
 
 switch ($action) {
+    case 'new_note':
+        // Clear the tile for a fresh note (empty content, no current note)
+        $tileId = (int)($input['tile_id'] ?? 0);
+        if ($tileId <= 0) {
+            jsonError('Invalid tile ID', 400);
+        }
+        try {
+            $tile = Database::queryOne(
+                'SELECT settings FROM tiles WHERE id = ? AND user_id = ?',
+                [$tileId, $userId]
+            );
+            if (!$tile) {
+                jsonError('Tile not found', 404);
+            }
+            $settings = json_decode($tile['settings'] ?? '{}', true);
+            if (!is_array($settings)) {
+                $settings = [];
+            }
+            $settings['notes'] = '';
+            $settings['current_note_id'] = null;
+            Database::execute(
+                'UPDATE tiles SET settings = ?, updated_at = NOW() WHERE id = ? AND user_id = ?',
+                [json_encode($settings), $tileId, $userId]
+            );
+            jsonResponse([
+                'success' => true,
+                'current_note_id' => null
+            ]);
+        } catch (Exception $e) {
+            logMessage('Notes new_note error: ' . $e->getMessage(), 'error');
+            jsonError('Failed to start new note', 500);
+        }
+        break;
+
     case 'save_to_list':
         // Save current note to the list and clear the tile
         $tileId = (int)($input['tile_id'] ?? 0);
